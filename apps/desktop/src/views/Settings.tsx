@@ -1,5 +1,9 @@
-import { useState } from "react";
+import { Bell, CircleAlert, FileCode2, Plug, TriangleAlert } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { useEffect, useState } from "react";
 
+import { Button, Card, Code, IconTile, Notice, PageIntro, Pill, cx, type Tone } from "../components/ui";
 import { useIntegrations, useSaveSettings, useSetHooks, useSettings } from "../lib/api";
 import { harnessNames } from "../lib/format";
 import type { Diff, HarnessId, HookStatus, Integration, Settings as SettingsData } from "../lib/types";
@@ -11,13 +15,45 @@ const statusLabels: Record<HookStatus, string> = {
   outdated: "Needs update",
 };
 
+const statusTones: Record<HookStatus, Tone> = {
+  not_installed: "neutral",
+  installed: "work",
+  needs_trust: "warn",
+  outdated: "warn",
+};
+
 export function Settings() {
   return (
-    <div className="mx-auto max-w-3xl px-6 py-6">
-      <h1 className="mb-6 text-xl font-semibold">Settings</h1>
+    <div className="mx-auto flex max-w-[860px] flex-col gap-5">
+      <PageIntro title="Settings" subtitle="Choose which harnesses AgentScope listens to, and when it should tap you on the shoulder." />
       <IntegrationsSection />
       <NotificationsSection />
     </div>
+  );
+}
+
+function SettingsCard({
+  icon,
+  title,
+  description,
+  children,
+}: {
+  icon: LucideIcon;
+  title: string;
+  description: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <Card className="overflow-hidden">
+      <header className="flex gap-3 border-b border-line-soft px-5 py-4">
+        <IconTile icon={icon} tone="accent" />
+        <div className="min-w-0">
+          <h2 className="text-[14px] font-bold text-ink">{title}</h2>
+          <p className="mt-1 text-[12px] leading-relaxed text-muted">{description}</p>
+        </div>
+      </header>
+      {children}
+    </Card>
   );
 }
 
@@ -51,26 +87,27 @@ function IntegrationsSection() {
   const shimMissing = integrations.isSuccess && integrations.data.shimPath === null;
 
   return (
-    <section className="mb-10">
-      <h2 className="text-sm font-semibold">Integrations</h2>
-      <p className="mt-1 mb-3 text-sm text-zinc-500">
-        Connecting adds observe-only hooks to the harness's user settings, so AgentScope sees
-        sessions, tool calls, and approval prompts the moment they happen. The hooks run in the
-        background, never answer prompts, and Disconnect removes exactly what was added. Without
-        hooks, AgentScope still follows transcripts and running processes.
-      </p>
-      {shimMissing && (
-        <p className="mb-3 rounded-lg bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-          This build does not include the agentscope-hook helper, so harnesses cannot be connected.
-          Run <code>pnpm sidecar</code> and restart, or reinstall AgentScope.
-        </p>
+    <SettingsCard
+      icon={Plug}
+      title="Integrations"
+      description="Connecting adds observe-only hooks to the harness's user settings, so AgentScope sees sessions, tool calls, and approval prompts the moment they happen. The hooks run in the background, never answer prompts, and Disconnect removes exactly what was added. Without hooks, AgentScope still follows transcripts and running processes."
+    >
+      {(shimMissing || error) && (
+        <div className="flex flex-col gap-2 px-5 pt-4">
+          {shimMissing && (
+            <Notice tone="warn" icon={TriangleAlert}>
+              This build does not include the agentscope-hook helper, so harnesses cannot be connected. Run{" "}
+              <code className="font-mono">pnpm sidecar</code> and restart, or reinstall AgentScope.
+            </Notice>
+          )}
+          {error && (
+            <Notice tone="danger" icon={CircleAlert}>
+              {error}
+            </Notice>
+          )}
+        </div>
       )}
-      {error && (
-        <p role="alert" className="mb-3 rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950 dark:text-red-300">
-          {error}
-        </p>
-      )}
-      <ul className="divide-y divide-zinc-200 rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
+      <ul className="divide-y divide-line-soft">
         {(integrations.data?.harnesses ?? []).map((i) => (
           <IntegrationRow
             key={i.detection.harness}
@@ -89,8 +126,17 @@ function IntegrationsSection() {
           onConfirm={apply}
         />
       )}
-    </section>
+    </SettingsCard>
   );
+}
+
+function initials(name: string): string {
+  return name
+    .split(/\s+/)
+    .map((w) => w[0])
+    .join("")
+    .slice(0, 2)
+    .toUpperCase();
 }
 
 function IntegrationRow({
@@ -106,41 +152,44 @@ function IntegrationRow({
 }) {
   const { detection, hookStatus, supported } = integration;
   const connected = hookStatus === "installed" || hookStatus === "needs_trust";
-  let status: string;
-  if (!detection.installed) status = "Not found on this machine";
-  else if (!supported) status = "Coming soon";
-  else status = statusLabels[hookStatus];
+  const name = harnessNames[detection.harness];
+  let status: ReactNode;
+  if (!detection.installed) status = <Pill>Not found on this machine</Pill>;
+  else if (!supported) status = <Pill tone="accent">Coming soon</Pill>;
+  else status = <Pill tone={statusTones[hookStatus]}>{statusLabels[hookStatus]}</Pill>;
 
   return (
-    <li className="flex items-center justify-between gap-4 px-4 py-3">
-      <div>
-        <p className="font-medium">{harnessNames[detection.harness]}</p>
-        <p className="text-xs text-zinc-500">
-          {status}
-          {detection.configDir && supported ? ` · ${detection.configDir}` : ""}
-        </p>
+    <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+      <div className="flex min-w-0 items-center gap-3">
+        <span
+          className={cx(
+            "grid size-9 shrink-0 place-items-center rounded-[10px] text-[11px] font-bold",
+            detection.installed ? "bg-accent-soft text-accent-text" : "bg-surface-3 text-subtle",
+          )}
+        >
+          {initials(name)}
+        </span>
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-[13px] font-semibold text-ink">{name}</p>
+            {status}
+          </div>
+          {detection.configDir && supported && (
+            <Code className="mt-1 inline-block max-w-full">{detection.configDir}</Code>
+          )}
+        </div>
       </div>
       {detection.installed && supported && (
         <div className="flex gap-2">
-          {hookStatus !== "installed" && (
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={onConnect}
-              className="rounded-md bg-zinc-900 px-3 py-1 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-            >
-              {hookStatus === "outdated" ? "Update" : "Connect"}
-            </button>
-          )}
           {(connected || hookStatus === "outdated") && (
-            <button
-              type="button"
-              disabled={disabled}
-              onClick={onDisconnect}
-              className="rounded-md border border-zinc-300 px-3 py-1 text-sm disabled:opacity-50 dark:border-zinc-700"
-            >
+            <Button size="sm" disabled={disabled} onClick={onDisconnect}>
               Disconnect
-            </button>
+            </Button>
+          )}
+          {hookStatus !== "installed" && (
+            <Button size="sm" variant="primary" disabled={disabled} onClick={onConnect}>
+              {hookStatus === "outdated" ? "Update" : "Connect"}
+            </Button>
           )}
         </div>
       )}
@@ -191,54 +240,83 @@ function DiffDialog({
   const lines = diffLines(diff.before ?? "", diff.after ?? "");
   const verb = connect ? "Connect" : "Disconnect";
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onCancel();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onCancel]);
+
   return (
-    <div role="dialog" aria-modal="true" aria-labelledby="diff-title" className="fixed inset-0 z-10 flex items-center justify-center bg-black/40 p-6">
-      <div className="flex max-h-full w-full max-w-3xl flex-col rounded-xl bg-white shadow-xl dark:bg-zinc-900">
-        <header className="border-b border-zinc-200 p-4 dark:border-zinc-800">
-          <h3 id="diff-title" className="font-semibold">
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="diff-title"
+      className="animate-fade fixed inset-0 z-50 grid place-items-center bg-(--scrim) p-6"
+    >
+      <div className="animate-pop flex max-h-full w-full max-w-3xl flex-col overflow-hidden rounded-2xl bg-surface shadow-pop">
+        <header className="border-b border-line-soft px-5 pt-[18px] pb-3.5">
+          <p className="mb-1 text-[11px] font-semibold text-muted">Review the change</p>
+          <h3 id="diff-title" className="text-[17px] font-bold text-ink">
             {verb} {harnessNames[harness]}
           </h3>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1.5 flex flex-wrap items-center gap-1 text-[12px] text-muted">
+            <FileCode2 size={13} aria-hidden />
             {unchanged ? "Nothing to change in " : diff.before === null ? "This creates " : "This edits "}
-            <code className="text-xs">{diff.path}</code>
+            <Code>{diff.path}</Code>
             {!unchanged && diff.before !== null && ". The original is backed up next to it before the first edit."}
           </p>
         </header>
         {!unchanged && (
-          <pre className="min-h-0 flex-1 overflow-auto p-4 text-xs leading-5">
+          <pre className="m-5 min-h-0 flex-1 overflow-auto rounded-[10px] border border-line-soft bg-surface-2 py-2 font-mono text-[11px] leading-5">
             {lines.map((l, idx) => (
               <div
                 key={idx}
-                className={
-                  l.sign === "+"
-                    ? "bg-emerald-50 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-200"
-                    : l.sign === "-"
-                      ? "bg-red-50 text-red-900 dark:bg-red-950 dark:text-red-200"
-                      : "text-zinc-500"
-                }
+                className={cx(
+                  "px-3",
+                  l.sign === "+" ? "bg-work-soft text-work-text" : l.sign === "-" ? "bg-danger-soft text-danger-text" : "text-muted",
+                )}
               >
                 {l.sign} {l.text}
               </div>
             ))}
           </pre>
         )}
-        <footer className="flex justify-end gap-2 border-t border-zinc-200 p-4 dark:border-zinc-800">
-          <button type="button" onClick={onCancel} className="rounded-md border border-zinc-300 px-3 py-1 text-sm dark:border-zinc-700">
-            Cancel
-          </button>
+        <footer className="flex justify-end gap-2 border-t border-line-soft px-5 py-3.5">
+          <Button onClick={onCancel}>Cancel</Button>
           {!unchanged && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={onConfirm}
-              className="rounded-md bg-zinc-900 px-3 py-1 text-sm font-medium text-white disabled:opacity-50 dark:bg-zinc-100 dark:text-zinc-900"
-            >
+            <Button variant="primary" disabled={busy} onClick={onConfirm}>
               {verb}
-            </button>
+            </Button>
           )}
         </footer>
       </div>
     </div>
+  );
+}
+
+function Switch({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      onClick={onChange}
+      className={cx(
+        "relative h-5 w-9 shrink-0 rounded-full transition-colors",
+        checked ? "bg-accent" : "bg-surface-3 ring-1 ring-line ring-inset",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cx(
+          "absolute top-0.5 left-0.5 size-4 rounded-full bg-white shadow-sm transition-transform",
+          checked && "translate-x-4",
+        )}
+      />
+    </button>
   );
 }
 
@@ -253,22 +331,25 @@ function NotificationsSection() {
     ["notifyInput", "An agent is waiting for input", "It finished its turn or asked you a question."],
   ];
   return (
-    <section>
-      <h2 className="mb-3 text-sm font-semibold">Notifications</h2>
-      <ul className="divide-y divide-zinc-200 rounded-xl border border-zinc-200 bg-white dark:divide-zinc-800 dark:border-zinc-800 dark:bg-zinc-900">
+    <SettingsCard icon={Bell} title="Notifications" description="Desktop notifications for the moments an agent is blocked on you.">
+      <ul className="divide-y divide-line-soft">
         {options.map(([key, label, help]) => (
-          <li key={key}>
-            <label className="flex cursor-pointer items-center justify-between gap-4 px-4 py-3">
-              <span>
-                <span className="block text-sm font-medium">{label}</span>
-                <span className="block text-xs text-zinc-500">{help}</span>
-              </span>
-              <input type="checkbox" className="size-4" checked={settings.data![key]} onChange={() => toggle(key)} />
-            </label>
+          <li key={key} className="flex items-center justify-between gap-4 px-5 py-3.5">
+            <span>
+              <span className="block text-[13px] font-semibold text-ink">{label}</span>
+              <span className="mt-0.5 block text-[11px] text-muted">{help}</span>
+            </span>
+            <Switch checked={settings.data![key]} onChange={() => toggle(key)} label={label} />
           </li>
         ))}
       </ul>
-      {save.isError && <p className="mt-2 text-sm text-red-600">{String(save.error)}</p>}
-    </section>
+      {save.isError && (
+        <div className="px-5 pb-4">
+          <Notice tone="danger" icon={CircleAlert}>
+            {String(save.error)}
+          </Notice>
+        </div>
+      )}
+    </SettingsCard>
   );
 }

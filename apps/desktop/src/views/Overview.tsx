@@ -1,9 +1,35 @@
+import { Bot, CircleAlert, Folder, Hand, Layers, Loader, MessageCircle, Moon, Network, Plug, Search, X } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import type { Agent, AppInfo, Session } from "../lib/types";
 import { SessionCard } from "../components/SessionCard";
+import {
+  Button,
+  Card,
+  Dot,
+  EmptyState,
+  IconTile,
+  Label,
+  LiveChip,
+  Notice,
+  PageIntro,
+  Pill,
+  SectionTitle,
+  cx,
+  type Tone,
+} from "../components/ui";
 import { useAppInfo, useSnapshot } from "../lib/api";
-import { harnessNames, needsUser } from "../lib/format";
+import {
+  countByFilter,
+  filterLabels,
+  filterOf,
+  filterTones,
+  liveSessions,
+  type SessionFilter,
+} from "../lib/filters";
+import { basename, harnessNames, needsUser } from "../lib/format";
+import { useNow } from "../lib/useNow";
 
 type GroupBy = "repo" | "harness";
 
@@ -22,9 +48,30 @@ function groupKey(session: Session, by: GroupBy): string {
   return session.repo?.root || session.cwd || "Unknown location";
 }
 
-export function Overview({ onOpen }: { onOpen: (sessionId: string) => void }) {
+function matchesSearch(session: Session, query: string): boolean {
+  if (!query) return true;
+  const haystack = [session.title, session.cwd, session.repo?.branch, session.model, harnessNames[session.harness]]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+  return haystack.includes(query.toLowerCase());
+}
+
+export function Overview({
+  onOpen,
+  filter,
+  onFilter,
+  onSettings,
+}: {
+  onOpen: (sessionId: string) => void;
+  filter: SessionFilter;
+  onFilter: (filter: SessionFilter) => void;
+  onSettings: () => void;
+}) {
   const snapshot = useSnapshot();
+  const now = useNow(10_000);
   const [groupBy, setGroupBy] = useState<GroupBy>(loadGroupBy);
+  const [query, setQuery] = useState("");
 
   const chooseGroupBy = (by: GroupBy) => {
     setGroupBy(by);
@@ -35,10 +82,7 @@ export function Overview({ onOpen }: { onOpen: (sessionId: string) => void }) {
     }
   };
 
-  const live = useMemo(
-    () => (snapshot.data?.sessions ?? []).filter((s) => s.endedAt === null),
-    [snapshot.data],
-  );
+  const live = useMemo(() => liveSessions(snapshot.data?.sessions), [snapshot.data]);
   const agentsBySession = useMemo(() => {
     const map = new Map<string, Agent[]>();
     for (const agent of snapshot.data?.agents ?? []) {
@@ -46,103 +90,246 @@ export function Overview({ onOpen }: { onOpen: (sessionId: string) => void }) {
     }
     return map;
   }, [snapshot.data]);
+  const counts = countByFilter(live);
+  const liveSubagents = (snapshot.data?.agents ?? []).filter(
+    (a) => a.kind === "subagent" && a.endedAt === null && live.some((s) => s.id === a.sessionId),
+  ).length;
+  const folders = new Set(live.map((s) => s.repo?.root || s.cwd)).size;
 
-  const needsYou = live.filter((s) => needsUser(s.state));
-  const groups = useMemo(() => {
-    const map = new Map<string, Session[]>();
-    for (const s of live.filter((s) => !needsUser(s.state))) {
-      const key = groupKey(s, groupBy);
-      map.set(key, [...(map.get(key) ?? []), s]);
-    }
-    return [...map.entries()].sort(([a], [b]) => a.localeCompare(b));
-  }, [live, groupBy]);
+  const visible = live.filter((s) => (filter === "all" || filterOf(s.state) === filter) && matchesSearch(s, query));
+  const needsYou = visible.filter((s) => needsUser(s.state));
+  const grouped = new Map<string, Session[]>();
+  for (const s of visible.filter((s) => !needsUser(s.state))) {
+    const key = groupKey(s, groupBy);
+    grouped.set(key, [...(grouped.get(key) ?? []), s]);
+  }
+  const groups = [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
 
   const card = (s: Session) => (
-    <SessionCard key={s.id} session={s} agents={agentsBySession.get(s.id) ?? []} onOpen={onOpen} />
+    <SessionCard key={s.id} session={s} agents={agentsBySession.get(s.id) ?? []} now={now} onOpen={onOpen} />
   );
+  const toggle = (f: SessionFilter) => onFilter(filter === f ? "all" : f);
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-6">
-      <header className="mb-6 flex items-center justify-between gap-4">
-        <h1 className="text-xl font-semibold">Overview</h1>
-        <div
-          role="group"
-          aria-label="Group sessions by"
-          className="flex rounded-lg border border-zinc-200 p-0.5 text-sm dark:border-zinc-800"
-        >
-          {(["repo", "harness"] as const).map((by) => (
-            <button
-              key={by}
-              type="button"
-              aria-pressed={groupBy === by}
-              onClick={() => chooseGroupBy(by)}
-              className={`rounded-md px-3 py-1 ${
-                groupBy === by
-                  ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900"
-                  : "text-zinc-600 dark:text-zinc-400"
-              }`}
-            >
-              By {by}
-            </button>
-          ))}
-        </div>
-      </header>
+    <div className="mx-auto flex max-w-[1180px] flex-col gap-5">
+      <PageIntro
+        eyebrow={<LiveChip />}
+        title="Your agents"
+        subtitle={
+          live.length === 0
+            ? "Everything AI that runs on this machine, in one view."
+            : `${live.length} live session${live.length === 1 ? "" : "s"} across ${folders} folder${folders === 1 ? "" : "s"}.`
+        }
+        actions={
+          <Button icon={Plug} onClick={onSettings}>
+            Connect harnesses
+          </Button>
+        }
+      />
 
       {snapshot.isError && (
-        <p className="rounded-lg bg-red-50 p-4 text-sm text-red-800 dark:bg-red-950 dark:text-red-300">
+        <Notice tone="danger" icon={CircleAlert}>
           Could not load agents: {String(snapshot.error)}
-        </p>
+        </Notice>
       )}
 
-      {needsYou.length > 0 && (
-        <section className="mb-8">
-          <h2 className="mb-3 text-sm font-semibold text-amber-700 dark:text-amber-400">
-            Needs you · {needsYou.length}
-          </h2>
-          <div className="grid gap-3 sm:grid-cols-2">{needsYou.map(card)}</div>
+      <div className="grid grid-cols-2 gap-3 md:grid-cols-3 xl:grid-cols-5">
+        <StatCard icon={Bot} tone="accent" value={live.length} label="Live sessions" caption={`in ${folders} folder${folders === 1 ? "" : "s"}`} active={filter === "all"} onClick={() => onFilter("all")} />
+        <StatCard icon={Hand} tone="warn" value={counts.approval} label="Needs approval" caption="answer in the terminal" active={filter === "approval"} onClick={() => toggle("approval")} />
+        <StatCard icon={MessageCircle} tone="ask" value={counts.input} label="Waiting for you" caption="turn finished or asked" active={filter === "input"} onClick={() => toggle("input")} />
+        <StatCard icon={Loader} tone="work" value={counts.working} label="Working" caption="thinking or running tools" active={filter === "working"} onClick={() => toggle("working")} />
+        <StatCard icon={Network} tone="neutral" value={liveSubagents} label="Subagents" caption="running under sessions" />
+      </div>
+
+      {live.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <SectionTitle count={visible.length}>Sessions</SectionTitle>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex h-8 w-[260px] items-center gap-2 rounded-[9px] border border-line bg-surface px-2.5 focus-within:border-accent focus-within:shadow-[0_0_0_3px_var(--accent-ring)]">
+                <Search size={14} className="shrink-0 text-subtle" aria-hidden />
+                <input
+                  type="search"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search title, folder or branch"
+                  aria-label="Search sessions"
+                  className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-subtle [&::-webkit-search-cancel-button]:hidden"
+                />
+                {query && (
+                  <button type="button" aria-label="Clear search" onClick={() => setQuery("")} className="text-subtle hover:text-ink">
+                    <X size={13} aria-hidden />
+                  </button>
+                )}
+              </label>
+              <div role="group" aria-label="Group sessions by" className="flex h-8 items-center rounded-[9px] border border-line bg-surface p-0.5">
+                <span className="px-2 text-[11px] text-subtle">Group:</span>
+                {(["repo", "harness"] as const).map((by) => (
+                  <button
+                    key={by}
+                    type="button"
+                    aria-pressed={groupBy === by}
+                    onClick={() => chooseGroupBy(by)}
+                    className={cx(
+                      "flex h-full items-center gap-1 rounded-[7px] px-2.5 text-[11px] font-semibold capitalize transition-colors",
+                      groupBy === by ? "bg-accent-soft text-accent-text" : "text-muted hover:text-ink",
+                    )}
+                  >
+                    {by === "repo" ? <Folder size={12} aria-hidden /> : <Layers size={12} aria-hidden />}
+                    {by}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            {(Object.keys(filterLabels) as (keyof typeof filterLabels)[]).map((f) => (
+              <button
+                key={f}
+                type="button"
+                aria-pressed={filter === f}
+                onClick={() => toggle(f)}
+                className={cx(
+                  "inline-flex h-7 items-center gap-1.5 rounded-full border px-2.5 text-[11px] font-semibold transition-colors",
+                  filter === f
+                    ? "border-accent-line bg-accent-soft text-accent-text"
+                    : "border-line bg-surface text-muted hover:bg-surface-2",
+                )}
+              >
+                <Dot tone={filterTones[f]} />
+                {filterLabels[f]}
+                <span className="text-subtle">{counts[f]}</span>
+              </button>
+            ))}
+            {(filter !== "all" || query) && (
+              <button
+                type="button"
+                onClick={() => {
+                  onFilter("all");
+                  setQuery("");
+                }}
+                className="ml-1 text-[11px] font-semibold text-accent-text hover:underline"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+
+          {needsYou.length > 0 && (
+            <Group title="Needs you" tone="warn" count={needsYou.length}>
+              {needsYou.map(card)}
+            </Group>
+          )}
+          {groups.map(([name, sessions]) => (
+            <Group key={name} title={groupBy === "repo" ? basename(name) : name} fullTitle={name} count={sessions.length}>
+              {sessions.map(card)}
+            </Group>
+          ))}
+          {visible.length === 0 && (
+            <Card className="px-6 py-10 text-center text-[12px] text-muted">No sessions match these filters.</Card>
+          )}
         </section>
       )}
 
-      {groups.map(([name, sessions]) => (
-        <section key={name} className="mb-8">
-          <h2 className="mb-3 truncate text-sm font-semibold text-zinc-500" title={name}>
-            {name}
-          </h2>
-          <div className="grid gap-3 sm:grid-cols-2">{sessions.map(card)}</div>
-        </section>
-      ))}
-
-      {snapshot.isSuccess && live.length === 0 && <EmptyState />}
+      {snapshot.isSuccess && live.length === 0 && <NoAgents onSettings={onSettings} />}
     </div>
   );
 }
 
-function EmptyState() {
+function StatCard({
+  icon,
+  tone,
+  value,
+  label,
+  caption,
+  active,
+  onClick,
+}: {
+  icon: LucideIcon;
+  tone: Tone;
+  value: number;
+  label: string;
+  caption: string;
+  active?: boolean;
+  onClick?: () => void;
+}) {
+  const body = (
+    <>
+      <IconTile icon={icon} tone={tone} />
+      <span className="mt-2 text-[23px] leading-[1.1] font-bold text-ink tabular-nums">{value}</span>
+      <span className="text-[12px] font-semibold text-ink-2">{label}</span>
+      <span className="text-[10px] text-subtle">{caption}</span>
+    </>
+  );
+  const base = "flex flex-col items-start gap-0.5 rounded-[14px] border bg-surface p-3.5 text-left shadow-card";
+  if (!onClick) return <div className={cx(base, "border-line")}>{body}</div>;
+  return (
+    <button
+      type="button"
+      aria-pressed={active}
+      onClick={onClick}
+      className={cx(
+        base,
+        "transition-[background-color,box-shadow,border-color] hover:bg-surface-2",
+        active ? "border-accent-line shadow-[0_0_0_3px_var(--accent-ring)]" : "border-line",
+      )}
+    >
+      {body}
+    </button>
+  );
+}
+
+function Group({
+  title,
+  fullTitle,
+  count,
+  tone,
+  children,
+}: {
+  title: string;
+  fullTitle?: string;
+  count: number;
+  tone?: Tone;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2.5 pt-1">
+      <div className="flex items-center gap-2" title={fullTitle}>
+        {tone && <Dot tone={tone} pulse />}
+        <Label className={tone === "warn" ? "text-warn-text" : undefined}>
+          {title} · {count}
+        </Label>
+      </div>
+      <div className="flex flex-col gap-2.5">{children}</div>
+    </div>
+  );
+}
+
+function NoAgents({ onSettings }: { onSettings: () => void }) {
   const info = useAppInfo();
   return (
-    <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center dark:border-zinc-700">
-      <h2 className="font-medium">No agents running</h2>
-      <p className="mx-auto mt-2 max-w-md text-sm text-zinc-500">
+    <EmptyState icon={Moon} title="No agents running">
+      <p className="mt-1.5 max-w-md text-[12px] leading-relaxed text-muted">
         Sessions from Claude Code, Codex, Copilot CLI, and Cursor will show up here as soon as they
         start. Connect a harness in Settings to see approvals live.
       </p>
       {info.data && <Harnesses info={info.data} />}
-    </div>
+      <Button variant="primary" icon={Plug} className="mt-6" onClick={onSettings}>
+        Connect a harness
+      </Button>
+    </EmptyState>
   );
 }
 
 function Harnesses({ info }: { info: AppInfo }) {
   return (
-    <ul className="mx-auto mt-6 grid max-w-md grid-cols-2 gap-2 text-left text-sm">
+    <ul className="mt-5 flex flex-wrap justify-center gap-2">
       {info.harnesses.map((h) => (
-        <li
-          key={h.harness}
-          className="flex items-center justify-between rounded-lg bg-zinc-100 px-3 py-2 dark:bg-zinc-900"
-        >
-          <span>{harnessNames[h.harness]}</span>
-          <span className={h.installed ? "text-emerald-600 dark:text-emerald-400" : "text-zinc-400"}>
-            {h.installed ? "Detected" : "Not found"}
-          </span>
+        <li key={h.harness}>
+          <Pill tone={h.installed ? "work" : "neutral"} className="px-2.5 py-1 text-[11px]">
+            {harnessNames[h.harness]} · {h.installed ? "Detected" : "Not found"}
+          </Pill>
         </li>
       ))}
     </ul>

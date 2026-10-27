@@ -1,24 +1,41 @@
+import { CircleAlert, CircleDashed, CircleHelp, CircleOff, Hand, Loader, MessageCircle, Moon, Sparkles } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+
 import type { AgentState } from "../lib/types";
 import { stateLabels } from "../lib/format";
+import { Pill, type Tone } from "./ui";
 
-const tones: Record<AgentState, string> = {
-  starting: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
-  thinking: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
-  running_tool: "bg-sky-100 text-sky-800 dark:bg-sky-950 dark:text-sky-300",
-  waiting_approval: "bg-amber-100 text-amber-900 dark:bg-amber-950 dark:text-amber-300",
-  maybe_waiting:
-    "border border-dashed border-amber-400 text-amber-800 dark:border-amber-700 dark:text-amber-300",
-  waiting_input: "bg-emerald-100 text-emerald-900 dark:bg-emerald-950 dark:text-emerald-300",
-  idle: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
-  ended: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
-  errored: "bg-red-100 text-red-800 dark:bg-red-950 dark:text-red-300",
-  unknown: "bg-zinc-100 text-zinc-500 dark:bg-zinc-800 dark:text-zinc-400",
+export const stateTones: Record<AgentState, Tone> = {
+  starting: "work",
+  thinking: "work",
+  running_tool: "work",
+  waiting_approval: "warn",
+  maybe_waiting: "warn",
+  waiting_input: "ask",
+  idle: "neutral",
+  ended: "neutral",
+  errored: "danger",
+  unknown: "neutral",
+};
+
+const icons: Record<AgentState, LucideIcon> = {
+  starting: Loader,
+  thinking: Sparkles,
+  running_tool: Loader,
+  waiting_approval: Hand,
+  maybe_waiting: Hand,
+  waiting_input: MessageCircle,
+  idle: Moon,
+  ended: CircleOff,
+  errored: CircleAlert,
+  unknown: CircleHelp,
 };
 
 export function StatePill({ state }: { state: AgentState }) {
+  const busy = state === "starting" || state === "running_tool";
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs font-medium whitespace-nowrap ${tones[state]}`}>
+    <Pill tone={stateTones[state]} icon={state === "maybe_waiting" ? CircleDashed : icons[state]} spin={busy} dashed={state === "maybe_waiting"}>
       {stateLabels[state]}
-    </span>
+    </Pill>
   );
 }
