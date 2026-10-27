@@ -210,7 +210,13 @@ mod tests {
         }
 
         // What `/hooks` writes after the user trusts them all.
-        let path = home.path().join("hooks.json").display().to_string();
+        // TOML escapes backslashes in Windows paths, as Codex's writer does.
+        let path = home
+            .path()
+            .join("hooks.json")
+            .display()
+            .to_string()
+            .replace('\\', "\\\\");
         let mut config = String::from("model = \"gpt-5.5\"\n");
         for (i, event) in EVENTS.iter().enumerate() {
             config.push_str(&format!(
