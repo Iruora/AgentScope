@@ -5,8 +5,11 @@
 pub mod event;
 pub mod ingest;
 pub mod model;
+pub mod redact;
 pub mod reducer;
+pub mod repo;
 pub mod store;
+pub mod tail;
 
 pub use agentscope_protocol::{HarnessId, RawHookEvent};
 pub use event::{AgentEvent, EventKind, EventSource};

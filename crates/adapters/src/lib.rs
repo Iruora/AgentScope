@@ -1,8 +1,8 @@
 //! One adapter per harness. Adapters are pure translators: the core owns IO
 //! scheduling, dedupe, and state. See section 3.4 of `docs/SPEC.md`.
 //!
-//! The adapters in this scaffold only detect installs and match processes;
-//! hook install and payload translation land per harness in steps 3 and 4.
+//! Claude Code is complete. The other adapters only detect installs and match
+//! processes until step 4.
 
 use std::path::{Path, PathBuf};
 
@@ -14,6 +14,7 @@ mod claude_code;
 mod codex;
 mod copilot_cli;
 mod cursor;
+pub mod summary;
 
 pub use claude_code::ClaudeCode;
 pub use codex::Codex;
@@ -24,13 +25,17 @@ pub trait Adapter: Send + Sync {
     fn id(&self) -> HarnessId;
     /// Find the install, config dirs, version. Cheap; runs at startup and on demand.
     fn detect(&self) -> Detection;
-    fn hooks_status(&self) -> HookStatus;
+    fn hooks_status(&self, shim_path: &Path) -> HookStatus;
+    /// Registers the shim. With `plan.dry_run` only the diff is returned.
     fn install_hooks(&self, plan: &HookPlan) -> Result<Diff>;
-    fn uninstall_hooks(&self) -> Result<Diff>;
+    /// Removes exactly the entries `install_hooks` added.
+    fn uninstall_hooks(&self, dry_run: bool) -> Result<Diff>;
     /// Turn a raw hook payload into zero or more normalized events.
     fn normalize_hook(&self, raw: &RawHookEvent) -> Vec<AgentEvent>;
     /// Paths to watch for transcripts; the core owns watching and tailing.
     fn transcript_roots(&self) -> Vec<WatchRoot>;
+    /// `bytes` holds whole lines only. Called for every file under a
+    /// [`WatchRoot`] that has the root's suffix.
     fn parse_transcript_chunk(&self, file: &TranscriptFile, bytes: &[u8]) -> Vec<AgentEvent>;
     /// Optional periodic scan (SQLite indexes, lock files).
     fn scan(&self, _since: Timestamp) -> Vec<AgentEvent> {
@@ -42,7 +47,7 @@ pub trait Adapter: Send + Sync {
 /// Every adapter, in display order.
 pub fn all() -> Vec<Box<dyn Adapter>> {
     vec![
-        Box::new(ClaudeCode),
+        Box::new(ClaudeCode::new()),
         Box::new(Codex),
         Box::new(CopilotCli),
         Box::new(Cursor),
@@ -51,7 +56,7 @@ pub fn all() -> Vec<Box<dyn Adapter>> {
 
 pub fn for_harness(id: HarnessId) -> Box<dyn Adapter> {
     match id {
-        HarnessId::ClaudeCode => Box::new(ClaudeCode),
+        HarnessId::ClaudeCode => Box::new(ClaudeCode::new()),
         HarnessId::Codex => Box::new(Codex),
         HarnessId::CopilotCli => Box::new(CopilotCli),
         HarnessId::Cursor => Box::new(Cursor),
@@ -66,6 +71,10 @@ pub enum AdapterError {
     Io(#[from] std::io::Error),
     #[error(transparent)]
     Json(#[from] serde_json::Error),
+    #[error("{path} is not a config file AgentScope can edit safely: {reason}")]
+    InvalidConfig { path: String, reason: String },
+    #[error("{0} was not found")]
+    NotFound(String),
 }
 
 pub type Result<T> = std::result::Result<T, AdapterError>;
@@ -90,11 +99,13 @@ pub enum HookStatus {
     Outdated,
 }
 
-/// What to register. Observe mode only registers non-blocking events.
+/// What to register. Observe mode only registers non-blocking events, and
+/// each adapter picks which of its harness's events those are.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct HookPlan {
     pub shim_path: PathBuf,
-    pub events: Vec<String>,
+    /// Return the diff without writing anything.
+    pub dry_run: bool,
 }
 
 /// A config change shown to the user before it is written.
@@ -102,8 +113,17 @@ pub struct HookPlan {
 #[serde(rename_all = "camelCase")]
 pub struct Diff {
     pub path: String,
+    /// `None` when the file does not exist (yet, or any more).
     pub before: Option<String>,
     pub after: Option<String>,
+    /// Where the original was copied before the first edit.
+    pub backup_path: Option<String>,
+}
+
+impl Diff {
+    pub fn is_noop(&self) -> bool {
+        self.before == self.after
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,11 +213,13 @@ mod tests {
 
     #[test]
     fn matches_processes_by_executable_name() {
-        assert!(ClaudeCode.match_process(&process("claude")).is_some());
+        assert!(ClaudeCode::new()
+            .match_process(&process("claude"))
+            .is_some());
         assert!(Codex.match_process(&process("codex.exe")).is_some());
         assert!(CopilotCli.match_process(&process("copilot")).is_some());
         assert!(Cursor.match_process(&process("cursor-agent")).is_some());
-        assert!(ClaudeCode
+        assert!(ClaudeCode::new()
             .match_process(&process("claude-helper"))
             .is_none());
     }

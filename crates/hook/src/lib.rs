@@ -71,9 +71,39 @@ fn parent_pid() -> Option<u32> {
     Some(std::os::unix::process::parent_id())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
 fn parent_pid() -> Option<u32> {
-    // TODO(step 3): read the parent pid via the Toolhelp API on Windows.
+    use windows_sys::Win32::Foundation::{CloseHandle, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::System::Diagnostics::ToolHelp::{
+        CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
+        TH32CS_SNAPPROCESS,
+    };
+
+    let me = std::process::id();
+    // SAFETY: plain Win32 calls on a snapshot handle we own and close.
+    unsafe {
+        let snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if snapshot == INVALID_HANDLE_VALUE {
+            return None;
+        }
+        let mut entry: PROCESSENTRY32W = std::mem::zeroed();
+        entry.dwSize = std::mem::size_of::<PROCESSENTRY32W>() as u32;
+        let mut found = None;
+        let mut ok = Process32FirstW(snapshot, &mut entry) != 0;
+        while ok {
+            if entry.th32ProcessID == me {
+                found = Some(entry.th32ParentProcessID);
+                break;
+            }
+            ok = Process32NextW(snapshot, &mut entry) != 0;
+        }
+        CloseHandle(snapshot);
+        found
+    }
+}
+
+#[cfg(not(any(unix, windows)))]
+fn parent_pid() -> Option<u32> {
     None
 }
 

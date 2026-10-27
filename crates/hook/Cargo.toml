@@ -4,6 +4,7 @@ description = "Fail-open hook shim that forwards harness hook payloads to AgentS
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [[bin]]
 name = "agentscope-hook"
@@ -12,6 +13,9 @@ path = "src/main.rs"
 [dependencies]
 agentscope-protocol.workspace = true
 serde_json.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
 
 [dev-dependencies]
 tempfile.workspace = true

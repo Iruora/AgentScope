@@ -22,7 +22,7 @@ function groupKey(session: Session, by: GroupBy): string {
   return session.repo?.root || session.cwd || "Unknown location";
 }
 
-export function Overview() {
+export function Overview({ onOpen }: { onOpen: (sessionId: string) => void }) {
   const snapshot = useSnapshot();
   const [groupBy, setGroupBy] = useState<GroupBy>(loadGroupBy);
 
@@ -58,7 +58,7 @@ export function Overview() {
   }, [live, groupBy]);
 
   const card = (s: Session) => (
-    <SessionCard key={s.id} session={s} agents={agentsBySession.get(s.id) ?? []} />
+    <SessionCard key={s.id} session={s} agents={agentsBySession.get(s.id) ?? []} onOpen={onOpen} />
   );
 
   return (
@@ -124,7 +124,7 @@ function EmptyState() {
       <h2 className="font-medium">No agents running</h2>
       <p className="mx-auto mt-2 max-w-md text-sm text-zinc-500">
         Sessions from Claude Code, Codex, Copilot CLI, and Cursor will show up here as soon as they
-        start.
+        start. Connect a harness in Settings to see approvals live.
       </p>
       {info.data && <Harnesses info={info.data} />}
     </div>

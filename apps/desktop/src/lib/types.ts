@@ -3,10 +3,18 @@
 export type {
   Activity_Serialize as Activity,
   Agent_Serialize as Agent,
+  AgentEvent_Serialize as AgentEvent,
   AgentState,
   AppInfo_Serialize as AppInfo,
+  Diff_Serialize as Diff,
+  EventKind_Serialize as EventKind,
+  GoToAgent_Serialize as GoToAgent,
   HarnessId,
+  HookStatus,
+  Integration_Serialize as Integration,
   PendingApproval_Serialize as PendingApproval,
   Session_Serialize as Session,
+  Settings_Serialize as Settings,
   Snapshot_Serialize as Snapshot,
+  Tokens_Serialize as Tokens,
 } from "../bindings";

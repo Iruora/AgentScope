@@ -1,27 +1,59 @@
 mod commands;
 mod engine;
+mod focus;
+mod procs;
+mod settings;
+mod shim;
 mod tray;
 
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use agentscope_core::ingest::{drain_spool, IngestServer};
-use tauri::{AppHandle, Manager, RunEvent, WindowEvent};
+use agentscope_core::AgentState;
+use notify::{RecursiveMode, Watcher};
+use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
+use tauri_plugin_notification::NotificationExt;
 use tauri_specta::{collect_commands, collect_events, Event};
 use tokio::sync::mpsc;
 
-use crate::commands::GraphChanged;
-use crate::engine::Engine;
+use crate::commands::{GraphChanged, OpenSession};
+use crate::engine::{Alert, Engine, Outcome};
+use crate::settings::Settings;
+
+/// How often process liveness and scans run (spec section 3.1).
+const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
+
+/// Transcripts are rescanned this often in case the file watcher missed a change.
+const RESCAN_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Coalesces bursts of file events into one read per file.
+const WATCH_DEBOUNCE: Duration = Duration::from_millis(200);
+
+/// A session is notified about the same state at most once in this window.
+const NOTIFY_DEBOUNCE: Duration = Duration::from_secs(60);
 
 /// Process-wide state that is not part of the agent graph.
 pub struct Runtime {
     pub data_dir: PathBuf,
     ingest_port: Mutex<Option<u16>>,
+    settings: Mutex<Settings>,
+    notified: Mutex<HashMap<String, (AgentState, Instant)>>,
+    tray_menu: Mutex<tray::MenuKey>,
 }
 
 impl Runtime {
     pub fn ingest_port(&self) -> Option<u16> {
         *self.ingest_port.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    pub fn settings(&self) -> Settings {
+        self.settings
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 }
 
@@ -29,9 +61,16 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
     tauri_specta::Builder::<tauri::Wry>::new()
         .commands(collect_commands![
             commands::get_snapshot,
-            commands::get_app_info
+            commands::get_app_info,
+            commands::get_session_events,
+            commands::get_integrations,
+            commands::set_hooks,
+            commands::go_to_agent,
+            commands::reveal_transcript,
+            commands::get_settings,
+            commands::set_settings,
         ])
-        .events(collect_events![GraphChanged])
+        .events(collect_events![GraphChanged, OpenSession])
 }
 
 #[cfg(any(debug_assertions, test))]
@@ -61,6 +100,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app)
         }))
+        .plugin(tauri_plugin_notification::init())
+        .plugin(tauri_plugin_opener::init())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
@@ -97,14 +138,30 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let engine = Arc::new(Engine::open(&data_dir.join("agentscope.db"))?);
     app.manage(engine.clone());
     app.manage(Runtime {
+        settings: Mutex::new(settings::load(&data_dir)),
         data_dir: data_dir.clone(),
         ingest_port: Mutex::new(None),
+        notified: Mutex::new(HashMap::new()),
+        tray_menu: Mutex::new(Vec::new()),
     });
 
     tray::create(app)?;
-    tray::set_waiting_count(app, engine.snapshot().waiting_count);
+    publish(
+        app,
+        &engine,
+        Outcome {
+            changed: true,
+            alerts: Vec::new(),
+        },
+    );
 
-    let app = app.clone();
+    spawn_ingest(app.clone(), engine.clone(), data_dir);
+    spawn_transcript_watcher(app.clone(), engine.clone());
+    spawn_sweeper(app.clone(), engine);
+    Ok(())
+}
+
+fn spawn_ingest(app: AppHandle, engine: Arc<Engine>, data_dir: PathBuf) {
     tauri::async_runtime::spawn(async move {
         let (tx, mut rx) = mpsc::channel(1024);
         // Start listening before draining so nothing new lands in the spool meanwhile.
@@ -123,30 +180,167 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         };
         match drain_spool(&data_dir) {
             Ok(spooled) => {
-                let changed = spooled
-                    .iter()
-                    .fold(false, |acc, raw| engine.ingest(raw) | acc);
-                tracing::info!(count = spooled.len(), "drained spool");
-                if changed {
-                    notify(&app, &engine);
+                let mut outcome = Outcome::default();
+                for raw in &spooled {
+                    // Spooled events are history: apply them, but do not notify.
+                    outcome.changed |= engine.ingest(raw).changed;
                 }
+                tracing::info!(count = spooled.len(), "drained spool");
+                publish(&app, &engine, outcome);
             }
             Err(err) => tracing::error!(%err, "failed to drain spool"),
         }
         while let Some(raw) = rx.recv().await {
-            if engine.ingest(&raw) {
-                notify(&app, &engine);
+            let outcome = engine.ingest(&raw);
+            publish(&app, &engine, outcome);
+        }
+    });
+}
+
+/// Tails transcripts as they change: a file watcher for speed, plus a
+/// periodic rescan for platforms or file systems where events get lost.
+fn spawn_transcript_watcher(app: AppHandle, engine: Arc<Engine>) {
+    std::thread::Builder::new()
+        .name("transcripts".into())
+        .spawn(move || {
+            let started = SystemTime::now();
+            publish(&app, &engine, engine.backfill(None));
+            tracing::info!(elapsed = ?started.elapsed().unwrap_or_default(), "transcript backfill done");
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            let mut watcher = match notify::recommended_watcher(tx) {
+                Ok(w) => Some(w),
+                Err(err) => {
+                    tracing::warn!(%err, "file watcher unavailable; polling transcripts");
+                    None
+                }
+            };
+            let mut watched = HashSet::new();
+            let mut last_rescan = SystemTime::now();
+            loop {
+                // Roots may appear later, e.g. the first time a harness runs.
+                if let Some(w) = watcher.as_mut() {
+                    for root in engine.transcript_roots() {
+                        if !watched.contains(&root.path) && root.path.is_dir() {
+                            let mode = if root.recursive {
+                                RecursiveMode::Recursive
+                            } else {
+                                RecursiveMode::NonRecursive
+                            };
+                            match w.watch(&root.path, mode) {
+                                Ok(()) => {
+                                    watched.insert(root.path);
+                                }
+                                Err(err) => tracing::warn!(%err, path = %root.path.display(), "cannot watch"),
+                            }
+                        }
+                    }
+                }
+
+                let mut paths = HashSet::new();
+                match rx.recv_timeout(RESCAN_INTERVAL) {
+                    Ok(first) => {
+                        let deadline = Instant::now() + WATCH_DEBOUNCE;
+                        let mut next = Some(first);
+                        while let Some(event) = next {
+                            if let Ok(event) = event {
+                                paths.extend(event.paths);
+                            }
+                            next = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())).ok();
+                        }
+                    }
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                        watcher = None;
+                        std::thread::sleep(RESCAN_INTERVAL);
+                    }
+                }
+                let mut outcome = Outcome::default();
+                for path in paths.iter().filter(|p| p.is_file()) {
+                    outcome.merge(engine.tail(path));
+                }
+                if last_rescan.elapsed().unwrap_or_default() >= RESCAN_INTERVAL {
+                    let since = last_rescan - RESCAN_INTERVAL;
+                    last_rescan = SystemTime::now();
+                    outcome.merge(engine.backfill(Some(since)));
+                }
+                publish(&app, &engine, outcome);
+            }
+        })
+        .expect("failed to start the transcript watcher");
+}
+
+fn spawn_sweeper(app: AppHandle, engine: Arc<Engine>) {
+    tauri::async_runtime::spawn(async move {
+        let mut interval = tokio::time::interval(SWEEP_INTERVAL);
+        loop {
+            interval.tick().await;
+            let engine = engine.clone();
+            let swept = tauri::async_runtime::spawn_blocking({
+                let engine = engine.clone();
+                move || engine.sweep()
+            })
+            .await;
+            match swept {
+                Ok(outcome) => publish(&app, &engine, outcome),
+                Err(err) => tracing::error!(%err, "sweep failed"),
             }
         }
     });
-    Ok(())
 }
 
-fn notify(app: &AppHandle, engine: &Engine) {
-    let waiting_count = engine.snapshot().waiting_count;
-    tray::set_waiting_count(app, waiting_count);
+/// Pushes a change to the UI and tray, and notifies about new alerts.
+fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
+    if !outcome.alerts.is_empty() {
+        notify_user(app, outcome.alerts);
+    }
+    if !outcome.changed {
+        return;
+    }
+    let snapshot = engine.snapshot();
+    let waiting_count = snapshot.waiting_count;
+    let runtime = app.state::<Runtime>();
+    let key = tray::menu_key(&snapshot);
+    let menu_changed = {
+        let mut last = runtime.tray_menu.lock().unwrap_or_else(|e| e.into_inner());
+        let changed = *last != key;
+        *last = key.clone();
+        changed
+    };
+    tray::update(app, waiting_count, menu_changed.then_some(&key));
     if let Err(err) = (GraphChanged { waiting_count }).emit(app) {
         tracing::warn!(%err, "failed to emit graph change");
+    }
+}
+
+fn notify_user(app: &AppHandle, alerts: Vec<Alert>) {
+    let runtime = app.state::<Runtime>();
+    let settings = runtime.settings();
+    let mut notified = runtime.notified.lock().unwrap_or_else(|e| e.into_inner());
+    let now = Instant::now();
+    notified.retain(|_, (_, at)| now.duration_since(*at) < NOTIFY_DEBOUNCE);
+    for alert in alerts {
+        let wanted = match alert.state {
+            AgentState::WaitingApproval | AgentState::MaybeWaiting => settings.notify_approvals,
+            _ => settings.notify_input,
+        };
+        if !wanted
+            || notified
+                .get(&alert.session_id)
+                .is_some_and(|(state, _)| *state == alert.state)
+        {
+            continue;
+        }
+        notified.insert(alert.session_id.clone(), (alert.state, now));
+        if let Err(err) = app
+            .notification()
+            .builder()
+            .title(&alert.title)
+            .body(&alert.body)
+            .show()
+        {
+            tracing::warn!(%err, "failed to show notification");
+        }
     }
 }
 
@@ -155,6 +349,18 @@ pub(crate) fn show_main_window<R: tauri::Runtime>(app: &AppHandle<R>) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+    }
+}
+
+/// Shows the main window on a session's detail page.
+pub(crate) fn open_session<R: tauri::Runtime>(app: &AppHandle<R>, session_id: &str) {
+    show_main_window(app);
+    let event = OpenSession {
+        session_id: session_id.to_owned(),
+    };
+    // The name tauri-specta gives `OpenSession`; `Event::emit` needs a concrete runtime.
+    if let Err(err) = app.emit("open-session", event) {
+        tracing::warn!(%err, "failed to open session");
     }
 }
 

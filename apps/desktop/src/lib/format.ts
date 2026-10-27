@@ -37,3 +37,18 @@ export function elapsed(since: string, now = Date.now()): string {
 export function basename(path: string): string {
   return path.split(/[\\/]/).filter(Boolean).pop() ?? path;
 }
+
+export function needsApproval(state: AgentState): boolean {
+  return state === "waiting_approval" || state === "maybe_waiting";
+}
+
+/** 1234 → "1.2k", 2_500_000 → "2.5M". */
+export function compactNumber(n: number): string {
+  if (n < 1000) return String(n);
+  if (n < 1_000_000) return `${(n / 1000).toFixed(n < 10_000 ? 1 : 0)}k`;
+  return `${(n / 1_000_000).toFixed(1)}M`;
+}
+
+export function clockTime(at: string): string {
+  return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+}

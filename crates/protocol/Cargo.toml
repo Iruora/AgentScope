@@ -4,6 +4,7 @@ description = "Wire format shared by the agentscope-hook shim and the AgentScope
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [features]
 # Derives specta::Type so the app can export these types to TypeScript.

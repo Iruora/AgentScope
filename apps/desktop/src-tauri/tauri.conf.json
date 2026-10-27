@@ -4,9 +4,9 @@
   "version": "0.1.0",
   "identifier": "io.github.iruora.agentscope",
   "build": {
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm sidecar && pnpm dev",
     "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "pnpm build",
+    "beforeBuildCommand": "pnpm sidecar --release && pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
@@ -36,6 +36,10 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "externalBin": [
+      "binaries/agentscope-hook"
+    ],
+    "license": "MIT OR Apache-2.0"
   }
 }

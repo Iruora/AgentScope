@@ -12,6 +12,7 @@ members = [
 version = "0.1.0"
 edition = "2021"
 repository = "https://github.com/Iruora/AgentScope"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 agentscope-adapters = { path = "crates/adapters" }
@@ -24,7 +25,7 @@ dirs = "7"
 getrandom = "0.3"
 rusqlite = { version = "0.41", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde_json = { version = "1", features = ["preserve_order"] }
 specta = { version = "=2.0.0-rc.26", features = ["chrono", "derive", "serde_json"] }
 specta-typescript = "0.0.13"
 tempfile = "3"
@@ -32,6 +33,7 @@ thiserror = "2"
 tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+windows-sys = "0.61"
 
 [profile.release]
 codegen-units = 1

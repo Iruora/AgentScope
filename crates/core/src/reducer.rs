@@ -88,6 +88,21 @@ impl Graph {
         self.approvals.get(id)
     }
 
+    pub fn sessions(&self) -> impl Iterator<Item = &Session> {
+        self.sessions.values()
+    }
+
+    /// Sets the repo a session's cwd belongs to. Returns whether it changed.
+    pub fn set_repo(&mut self, session_id: &str, repo: Option<Repo>) -> bool {
+        match self.sessions.get_mut(session_id) {
+            Some(session) if session.repo != repo => {
+                session.repo = repo;
+                true
+            }
+            _ => false,
+        }
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         let mut sessions: Vec<Session> = self.sessions.values().cloned().collect();
         sessions.sort_by_key(|s| std::cmp::Reverse(s.last_event_at));
@@ -124,6 +139,15 @@ impl Graph {
             }
             self.insert_session(ev, &session_id);
         }
+        let reopen = self.sessions[&session_id]
+            .ended_at
+            .is_some_and(|ended| ev.at > ended && ev.kind.is_activity());
+        if reopen {
+            self.sessions
+                .get_mut(&session_id)
+                .expect("checked above")
+                .ended_at = None;
+        }
         let agent_id = self.ensure_agent(ev, &session_id, &mut changes);
 
         match &ev.kind {
@@ -147,7 +171,12 @@ impl Graph {
                     session.pid = *pid;
                 }
                 session.ended_at = None;
-                self.set_agent_state(&agent_id, AgentState::Starting, ev.at);
+                // A transcript replayed after hooks must not rewind the state.
+                if ev.source == EventSource::Hook
+                    || self.agents[&agent_id].state == AgentState::Unknown
+                {
+                    self.set_agent_state(&agent_id, AgentState::Starting, ev.at);
+                }
             }
             EventKind::SessionEnded => {
                 self.sessions
@@ -173,16 +202,37 @@ impl Graph {
                     &mut changes,
                 );
             }
+            EventKind::SessionInfo { cwd, model, title } => {
+                let session = self.sessions.get_mut(&session_id).expect("inserted above");
+                if let Some(cwd) = cwd.as_ref().filter(|c| !c.is_empty()) {
+                    session.cwd.clone_from(cwd);
+                }
+                if model.is_some() {
+                    session.model.clone_from(model);
+                }
+                if let Some(title) = title.as_deref().and_then(title_from_prompt) {
+                    session.title = Some(title);
+                }
+            }
             EventKind::PromptSubmitted { prompt } => {
                 let session = self.sessions.get_mut(&session_id).expect("inserted above");
                 if session.title.is_none() {
                     session.title = title_from_prompt(prompt);
                 }
+                // The user is typing again, so any prompt they were shown is gone.
+                self.resolve_approvals(
+                    |a| a.session_id == session_id,
+                    Resolution::Unknown,
+                    ev.at,
+                    &mut changes,
+                );
                 self.set_agent_state(&agent_id, AgentState::Thinking, ev.at);
             }
             EventKind::AgentStarted { .. } => {
                 // `ensure_agent` created it with the right parent and type.
-                self.set_agent_state(&agent_id, AgentState::Starting, ev.at);
+                if self.agents[&agent_id].state == AgentState::Unknown {
+                    self.set_agent_state(&agent_id, AgentState::Starting, ev.at);
+                }
             }
             EventKind::AgentStopped { result } => {
                 let agent = self.agents.get_mut(&agent_id).expect("ensured above");
@@ -296,6 +346,15 @@ impl Graph {
                     .expect("inserted above")
                     .tokens = Some(*tokens);
             }
+            EventKind::TokensUsed { tokens } => {
+                let session = self.sessions.get_mut(&session_id).expect("inserted above");
+                let total = session.tokens.get_or_insert_with(Tokens::default);
+                total.input += tokens.input;
+                total.output += tokens.output;
+                if let Some(cached) = tokens.cached {
+                    total.cached = Some(total.cached.unwrap_or(0) + cached);
+                }
+            }
             EventKind::Heartbeat { pid } => {
                 self.sessions
                     .get_mut(&session_id)
@@ -305,10 +364,20 @@ impl Graph {
             EventKind::Unknown { .. } => {}
         }
 
+        // Sources arrive out of order (a scan can beat a transcript backfill),
+        // so the earliest event seen marks the start.
+        if let Some(agent) = self.agents.get_mut(&agent_id) {
+            if ev.at < agent.started_at {
+                agent.started_at = ev.at;
+            }
+        }
         changes.agents.insert(agent_id);
         let session = self.sessions.get_mut(&session_id).expect("inserted above");
         if ev.at > session.last_event_at {
             session.last_event_at = ev.at;
+        }
+        if ev.at < session.started_at {
+            session.started_at = ev.at;
         }
         self.refresh_session_state(&session_id);
         changes.sessions.insert(session_id);
@@ -696,6 +765,107 @@ mod tests {
             !s.graph.apply(&later_hook).is_empty(),
             "hook still applies after a transcript"
         );
+    }
+
+    #[test]
+    fn activity_after_the_end_reopens_a_session() {
+        let mut s = Script::new();
+        s.apply(None, started());
+        s.apply(None, EventKind::SessionEnded);
+        // A stale transcript line from before the end changes nothing.
+        let mut old = s.ev(None, None, EventKind::Compacted);
+        old.at -= Duration::seconds(60);
+        s.graph.apply(&old);
+        assert_eq!(s.session().state, AgentState::Ended);
+
+        s.apply(
+            None,
+            EventKind::PromptSubmitted {
+                prompt: "again".into(),
+            },
+        );
+        assert!(s.session().ended_at.is_none());
+        assert_eq!(s.session().state, AgentState::Thinking);
+    }
+
+    #[test]
+    fn a_new_prompt_clears_unanswered_approvals() {
+        let mut s = Script::new();
+        s.apply(None, approval("t1"));
+        s.apply(
+            None,
+            EventKind::PromptSubmitted {
+                prompt: "never mind".into(),
+            },
+        );
+        assert!(s.graph.snapshot().approvals.is_empty());
+        let a = s.graph.approval("claude-code:s1#t1").unwrap();
+        assert_eq!(a.resolution, Some(Resolution::Unknown));
+    }
+
+    #[test]
+    fn session_info_and_token_usage() {
+        let mut s = Script::new();
+        s.apply(
+            None,
+            EventKind::PromptSubmitted {
+                prompt: "first prompt".into(),
+            },
+        );
+        s.apply(
+            None,
+            EventKind::SessionInfo {
+                cwd: Some("/repo".into()),
+                model: Some("m".into()),
+                title: Some("Harness title".into()),
+            },
+        );
+        s.apply(
+            None,
+            EventKind::SessionInfo {
+                cwd: None,
+                model: None,
+                title: None,
+            },
+        );
+        assert_eq!(s.session().title.as_deref(), Some("Harness title"));
+        assert_eq!(s.session().cwd, "/repo");
+        assert_eq!(s.session().model.as_deref(), Some("m"));
+
+        let used = |input, cached| EventKind::TokensUsed {
+            tokens: Tokens {
+                input,
+                output: 1,
+                cached,
+            },
+        };
+        s.apply(None, used(10, None));
+        s.apply(None, used(5, Some(7)));
+        assert_eq!(
+            s.session().tokens,
+            Some(Tokens {
+                input: 15,
+                output: 2,
+                cached: Some(7)
+            })
+        );
+    }
+
+    #[test]
+    fn replayed_starts_do_not_rewind_state() {
+        let mut s = Script::new();
+        s.apply(None, started());
+        s.apply(
+            None,
+            EventKind::ToolStarted {
+                tool: "Bash".into(),
+                summary: "Bash: ls".into(),
+            },
+        );
+        let mut replay = s.ev(None, None, started());
+        replay.source = EventSource::Transcript;
+        s.graph.apply(&replay);
+        assert_eq!(s.session().state, AgentState::RunningTool);
     }
 
     #[test]
