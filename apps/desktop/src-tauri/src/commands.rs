@@ -161,8 +161,17 @@ pub fn get_settings(runtime: State<'_, Runtime>) -> Settings {
 
 #[tauri::command]
 #[specta::specta]
-pub fn set_settings(runtime: State<'_, Runtime>, settings: Settings) -> Result<(), String> {
+pub fn set_settings(
+    engine: State<'_, Arc<Engine>>,
+    runtime: State<'_, Runtime>,
+    settings: Settings,
+) -> Result<(), String> {
     crate::settings::save(&runtime.data_dir, &settings).map_err(|e| e.to_string())?;
+    if settings.retention_days != runtime.settings().retention_days {
+        engine
+            .set_retention(settings.retention_days)
+            .map_err(|e| e.to_string())?;
+    }
     *runtime.settings.lock().unwrap_or_else(|e| e.into_inner()) = settings;
     Ok(())
 }

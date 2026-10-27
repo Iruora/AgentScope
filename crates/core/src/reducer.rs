@@ -1,7 +1,7 @@
 //! Applies [`AgentEvent`]s to the in-memory graph of sessions, agents, and
 //! approvals. Pure and synchronous: the caller owns IO and persistence.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
 use chrono::Duration;
 use serde::{Deserialize, Serialize};
@@ -94,6 +94,23 @@ impl Graph {
 
     pub fn sessions(&self) -> impl Iterator<Item = &Session> {
         self.sessions.values()
+    }
+
+    /// Drops ended sessions last active before `cutoff`, with their agents
+    /// and approvals, as [`crate::Store::prune`] does on disk.
+    pub fn forget_ended_before(&mut self, cutoff: Timestamp) {
+        let old: HashSet<String> = self
+            .sessions
+            .values()
+            .filter(|s| s.ended_at.is_some() && s.last_event_at < cutoff)
+            .map(|s| s.id.clone())
+            .collect();
+        if old.is_empty() {
+            return;
+        }
+        self.sessions.retain(|id, _| !old.contains(id));
+        self.agents.retain(|_, a| !old.contains(&a.session_id));
+        self.approvals.retain(|_, a| !old.contains(&a.session_id));
     }
 
     /// Sets the repo a session's cwd belongs to. Returns whether it changed.
@@ -994,6 +1011,36 @@ mod tests {
             .graph
             .due_possible_approvals(at + Duration::seconds(60), Duration::seconds(5))
             .is_empty());
+    }
+
+    #[test]
+    fn forgets_only_old_ended_sessions() {
+        let mut s = Script::new();
+        s.apply(
+            None,
+            EventKind::SessionStarted {
+                cwd: "/w".into(),
+                model: None,
+                transcript_path: None,
+                pid: None,
+            },
+        );
+        let cutoff = s.session().last_event_at + Duration::days(1);
+        s.graph.forget_ended_before(cutoff);
+        assert!(
+            s.graph.session("claude-code:s1").is_some(),
+            "live sessions stay"
+        );
+
+        s.apply(None, EventKind::SessionEnded);
+        s.graph.forget_ended_before(s.session().last_event_at);
+        assert!(
+            s.graph.session("claude-code:s1").is_some(),
+            "recent ones stay"
+        );
+        s.graph.forget_ended_before(cutoff);
+        assert!(s.graph.session("claude-code:s1").is_none());
+        assert!(s.graph.snapshot().agents.is_empty());
     }
 
     #[test]

@@ -69,7 +69,11 @@ export function useSaveSettings() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (settings: Settings) => unwrap(commands.setSettings(settings)),
-    onSuccess: (_, settings) => queryClient.setQueryData(["settings"], settings),
+    onSuccess: (_, settings) => {
+      queryClient.setQueryData(["settings"], settings);
+      // A shorter retention drops history from the graph.
+      void queryClient.invalidateQueries({ queryKey: snapshotKey });
+    },
   });
 }
 

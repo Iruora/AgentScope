@@ -4,11 +4,13 @@ import type { LucideIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 
 import { Dot, IconButton, cx } from "./components/ui";
-import { useGraphUpdates, useOpenSessionRequests, useSnapshot } from "./lib/api";
+import { useGraphUpdates, useOpenSessionRequests, useSettings, useSnapshot } from "./lib/api";
 import { countByFilter, filterLabels, filterTones, liveSessions, type SessionFilter } from "./lib/filters";
 import { useTheme } from "./lib/theme";
 import { useNow } from "./lib/useNow";
 import { Approvals } from "./views/Approvals";
+import { History as HistoryView } from "./views/History";
+import { Onboarding } from "./views/Onboarding";
 import { Overview } from "./views/Overview";
 import { SessionDetail } from "./views/SessionDetail";
 import { Settings } from "./views/Settings";
@@ -26,13 +28,19 @@ export function App() {
     [],
   );
   useOpenSessionRequests(openSession);
+  const settings = useSettings();
   const go = (section: Section, filter: SessionFilter = "all") => setRoute({ section, filter });
+
+  if (settings.isPending) return null;
+  if (settings.data && !settings.data.onboarded) return <Onboarding brand={<Brand />} />;
 
   let view;
   if (route.sessionId) {
     view = <SessionDetail sessionId={route.sessionId} onBack={() => setRoute({ ...route, sessionId: undefined })} />;
   } else if (route.section === "Approvals") {
     view = <Approvals onOpen={openSession} />;
+  } else if (route.section === "History") {
+    view = <HistoryView onOpen={openSession} />;
   } else if (route.section === "Settings") {
     view = <Settings />;
   } else {
@@ -167,7 +175,7 @@ function Sidebar({ route, go }: { route: Route; go: (section: Section, filter?: 
           countTone="warn"
           onClick={() => go("Approvals")}
         />
-        <NavItem icon={History} label="History" active={false} disabled hint="Soon" onClick={() => {}} />
+        <NavItem icon={History} label="History" active={at("History")} onClick={() => go("History")} />
       </div>
       <div className="mt-auto">
         <NavItem icon={SettingsIcon} label="Settings" active={at("Settings")} onClick={() => go("Settings")} />

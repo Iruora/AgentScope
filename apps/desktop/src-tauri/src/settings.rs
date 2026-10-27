@@ -12,6 +12,10 @@ pub struct Settings {
     pub notify_approvals: bool,
     /// Notify when an agent finishes a turn or asks a question.
     pub notify_input: bool,
+    /// How long ended sessions stay in History.
+    pub retention_days: u32,
+    /// The first-run welcome was finished or skipped.
+    pub onboarded: bool,
 }
 
 impl Default for Settings {
@@ -19,6 +23,8 @@ impl Default for Settings {
         Self {
             notify_approvals: true,
             notify_input: false,
+            retention_days: crate::engine::DEFAULT_RETENTION_DAYS,
+            onboarded: false,
         }
     }
 }
@@ -53,13 +59,15 @@ mod tests {
         assert_eq!(
             load(dir.path()),
             Settings {
-                notify_approvals: true,
-                notify_input: true
+                notify_input: true,
+                ..Settings::default()
             }
         );
         let off = Settings {
             notify_approvals: false,
             notify_input: false,
+            retention_days: 30,
+            onboarded: true,
         };
         save(dir.path(), &off).unwrap();
         assert_eq!(load(dir.path()), off);

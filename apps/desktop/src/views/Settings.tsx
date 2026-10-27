@@ -1,4 +1,4 @@
-import { Bell, CircleAlert, FileCode2, Plug, TriangleAlert } from "lucide-react";
+import { Bell, CircleAlert, FileCode2, History, Plug, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -28,6 +28,7 @@ export function Settings() {
       <PageIntro title="Settings" subtitle="Choose which harnesses AgentScope listens to, and when it should tap you on the shoulder." />
       <IntegrationsSection />
       <NotificationsSection />
+      <HistorySection />
     </div>
   );
 }
@@ -59,7 +60,7 @@ function SettingsCard({
 
 type Pending = { harness: HarnessId; connect: boolean; diff: Diff };
 
-function IntegrationsSection() {
+export function IntegrationsSection() {
   const integrations = useIntegrations();
   const setHooks = useSetHooks();
   const [pending, setPending] = useState<Pending | null>(null);
@@ -322,13 +323,15 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: () =
   );
 }
 
+type NotifyKey = "notifyApprovals" | "notifyInput";
+
 function NotificationsSection() {
   const settings = useSettings();
   const save = useSaveSettings();
   if (!settings.data) return null;
-  const toggle = (key: keyof SettingsData) => save.mutate({ ...settings.data!, [key]: !settings.data![key] });
+  const toggle = (key: NotifyKey) => save.mutate({ ...settings.data!, [key]: !settings.data![key] });
 
-  const options: [keyof SettingsData, string, string][] = [
+  const options: [NotifyKey, string, string][] = [
     ["notifyApprovals", "An agent needs approval", "A permission prompt is waiting in a terminal."],
     ["notifyInput", "An agent is waiting for input", "It finished its turn or asked you a question."],
   ];
@@ -345,6 +348,48 @@ function NotificationsSection() {
           </li>
         ))}
       </ul>
+      {save.isError && (
+        <div className="px-5 pb-4">
+          <Notice tone="danger" icon={CircleAlert}>
+            {String(save.error)}
+          </Notice>
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+const RETENTION_CHOICES = [1, 3, 7, 14, 30, 90];
+
+function HistorySection() {
+  const settings = useSettings();
+  const save = useSaveSettings();
+  if (!settings.data) return null;
+  const current: SettingsData = settings.data;
+  return (
+    <SettingsCard
+      icon={History}
+      title="History"
+      description="Ended sessions and their events stay on this machine for this long, then are deleted. Live sessions are always kept."
+    >
+      <div className="flex items-center justify-between gap-4 px-5 py-3.5">
+        <label htmlFor="retention" className="text-[13px] font-semibold text-ink">
+          Keep history for
+        </label>
+        <select
+          id="retention"
+          value={current.retentionDays}
+          disabled={save.isPending}
+          onChange={(e) => save.mutate({ ...current, retentionDays: Number(e.target.value) })}
+          className="h-8 rounded-[9px] border border-line bg-surface px-2.5 text-[12px] font-semibold text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]"
+        >
+          {RETENTION_CHOICES.map((days) => (
+            <option key={days} value={days}>
+              {days} day{days === 1 ? "" : "s"}
+            </option>
+          ))}
+        </select>
+      </div>
       {save.isError && (
         <div className="px-5 pb-4">
           <Notice tone="danger" icon={CircleAlert}>

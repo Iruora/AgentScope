@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::{Mutex, MutexGuard};
 
 use agentscope_adapters::{
@@ -19,7 +20,10 @@ use chrono::Utc;
 use crate::procs::Procs;
 
 /// Default history retention (spec section 8).
-pub const RETENTION_DAYS: i64 = 7;
+pub const DEFAULT_RETENTION_DAYS: u32 = 7;
+
+/// The retention choices Settings offers are clamped to this range.
+const RETENTION_DAYS_RANGE: std::ops::RangeInclusive<u32> = 1..=90;
 
 /// A session with no known process and no event for this long is over.
 const STALE_AFTER_MINUTES: i64 = 10;
@@ -38,6 +42,7 @@ pub struct Engine {
     adapters: HashMap<HarnessId, Box<dyn Adapter>>,
     inner: Mutex<Inner>,
     procs: Mutex<Procs>,
+    retention_days: AtomicU32,
 }
 
 struct Inner {
@@ -81,16 +86,19 @@ pub struct AgentLocation {
 }
 
 impl Engine {
-    pub fn open(db_path: &Path) -> Result<Self, StoreError> {
-        Self::with_adapters(db_path, agentscope_adapters::all())
+    pub fn open(db_path: &Path, retention_days: u32) -> Result<Self, StoreError> {
+        Self::with_adapters(db_path, agentscope_adapters::all(), retention_days)
     }
 
     pub fn with_adapters(
         db_path: &Path,
         adapters: Vec<Box<dyn Adapter>>,
+        retention_days: u32,
     ) -> Result<Self, StoreError> {
+        let retention_days =
+            retention_days.clamp(*RETENTION_DAYS_RANGE.start(), *RETENTION_DAYS_RANGE.end());
         let mut store = Store::open(db_path)?;
-        let pruned = store.prune(Duration::days(RETENTION_DAYS))?;
+        let pruned = store.prune(Duration::days(retention_days.into()))?;
         tracing::info!(pruned, "store opened");
         let graph = store.load_graph()?;
         let tailer = Tailer::new(store.transcript_offsets()?);
@@ -102,7 +110,32 @@ impl Engine {
                 tailer,
             }),
             procs: Mutex::new(Procs::new()),
+            retention_days: AtomicU32::new(retention_days),
         })
+    }
+
+    fn retention(&self) -> Duration {
+        Duration::days(self.retention_days.load(Ordering::Relaxed).into())
+    }
+
+    /// Changes how long ended sessions are kept, and drops what falls outside
+    /// the new window.
+    pub fn set_retention(&self, days: u32) -> Result<(), StoreError> {
+        let days = days.clamp(*RETENTION_DAYS_RANGE.start(), *RETENTION_DAYS_RANGE.end());
+        self.retention_days.store(days, Ordering::Relaxed);
+        self.prune()
+    }
+
+    /// Drops events and ended sessions older than the retention window, from
+    /// the store and from the graph the UI reads.
+    pub fn prune(&self) -> Result<(), StoreError> {
+        let retention = self.retention();
+        let mut inner = self.lock();
+        let pruned = inner.store.prune(retention)?;
+        if pruned > 0 {
+            inner.graph.forget_ended_before(Utc::now() - retention);
+        }
+        Ok(())
     }
 
     pub fn snapshot(&self) -> Snapshot {
@@ -238,8 +271,7 @@ impl Engine {
     /// Reads transcripts changed since `since`. Files last written before the
     /// retention window are skipped, and only their future lines are read.
     pub fn backfill(&self, since: Option<std::time::SystemTime>) -> Outcome {
-        let cutoff = std::time::SystemTime::now()
-            - std::time::Duration::from_secs(RETENTION_DAYS as u64 * 86_400);
+        let cutoff = std::time::SystemTime::now() - self.retention().to_std().unwrap_or_default();
         let mut files = Vec::new();
         for root in self.transcript_roots() {
             walk(&root.path, root.suffix, MAX_WALK_DEPTH, &mut files);
@@ -340,9 +372,17 @@ impl Engine {
                 }
             };
             if !alive {
+                // A process that just exited ended now; a session that went
+                // quiet ended with its last event, which keeps backfilled
+                // sessions on the right day in History.
+                let at = if session.pid.is_some() {
+                    now
+                } else {
+                    session.last_event_at.min(now)
+                };
                 events.push(AgentEvent {
                     source: EventSource::Process,
-                    at: now,
+                    at,
                     harness: session.harness,
                     session: session.native_id.clone(),
                     agent: None,
@@ -528,7 +568,12 @@ mod tests {
     }
 
     fn engine(config: &Path, db: &Path) -> Engine {
-        Engine::with_adapters(db, vec![Box::new(ClaudeCode::with_config_dir(config))]).unwrap()
+        Engine::with_adapters(
+            db,
+            vec![Box::new(ClaudeCode::with_config_dir(config))],
+            DEFAULT_RETENTION_DAYS,
+        )
+        .unwrap()
     }
 
     fn hook(name: &str) -> RawHookEvent {

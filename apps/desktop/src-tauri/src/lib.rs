@@ -25,6 +25,8 @@ use crate::settings::Settings;
 
 /// How often process liveness and scans run (spec section 3.1).
 const SWEEP_INTERVAL: Duration = Duration::from_secs(5);
+/// Old history is also dropped while the app stays open for days.
+const PRUNE_INTERVAL: Duration = Duration::from_secs(3600);
 
 /// Transcripts are rescanned this often in case the file watcher missed a change.
 const RESCAN_INTERVAL: Duration = Duration::from_secs(30);
@@ -135,10 +137,14 @@ pub fn run() {
 fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = agentscope_protocol::data_dir().ok_or("could not find a data directory")?;
     std::fs::create_dir_all(&data_dir)?;
-    let engine = Arc::new(Engine::open(&data_dir.join("agentscope.db"))?);
+    let settings = settings::load(&data_dir);
+    let engine = Arc::new(Engine::open(
+        &data_dir.join("agentscope.db"),
+        settings.retention_days,
+    )?);
     app.manage(engine.clone());
     app.manage(Runtime {
-        settings: Mutex::new(settings::load(&data_dir)),
+        settings: Mutex::new(settings),
         data_dir: data_dir.clone(),
         ingest_port: Mutex::new(None),
         notified: Mutex::new(HashMap::new()),
@@ -273,12 +279,24 @@ fn spawn_transcript_watcher(app: AppHandle, engine: Arc<Engine>) {
 fn spawn_sweeper(app: AppHandle, engine: Arc<Engine>) {
     tauri::async_runtime::spawn(async move {
         let mut interval = tokio::time::interval(SWEEP_INTERVAL);
+        let mut last_prune = Instant::now();
         loop {
             interval.tick().await;
             let engine = engine.clone();
             let swept = tauri::async_runtime::spawn_blocking({
                 let engine = engine.clone();
-                move || engine.sweep()
+                let prune = last_prune.elapsed() >= PRUNE_INTERVAL;
+                if prune {
+                    last_prune = Instant::now();
+                }
+                move || {
+                    if prune {
+                        if let Err(err) = engine.prune() {
+                            tracing::warn!(%err, "pruning history failed");
+                        }
+                    }
+                    engine.sweep()
+                }
             })
             .await;
             match swept {
