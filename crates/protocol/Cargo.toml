@@ -1,0 +1,17 @@
+[package]
+name = "agentscope-protocol"
+description = "Wire format shared by the agentscope-hook shim and the AgentScope app"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[features]
+# Derives specta::Type so the app can export these types to TypeScript.
+# Off by default so the hook shim stays dependency-light.
+specta = ["dep:specta"]
+
+[dependencies]
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+specta = { workspace = true, optional = true }

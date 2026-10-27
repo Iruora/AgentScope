@@ -1,0 +1,24 @@
+[package]
+name = "agentscope-core"
+description = "AgentScope data model, reducer, store, and ingest server (no Tauri deps)"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentscope-protocol = { workspace = true, features = ["specta"] }
+axum.workspace = true
+chrono.workspace = true
+getrandom.workspace = true
+rusqlite.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+specta.workspace = true
+specta-typescript.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["io-util"] }
