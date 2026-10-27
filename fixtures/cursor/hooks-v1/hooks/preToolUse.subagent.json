@@ -1,0 +1,18 @@
+{
+  "conversation_id": "sub-7f3a",
+  "generation_id": "gen-s1",
+  "model": "claude-sonnet-5.5",
+  "cursor_version": "2.6.0",
+  "workspace_roots": [
+    "/work/app"
+  ],
+  "user_email": "dev@example.com",
+  "transcript_path": "/home/dev/.cursor/projects/work-app/agent-transcripts/c0ffee00-1111-4222-8333-444455556666.jsonl",
+  "hook_event_name": "preToolUse",
+  "tool_name": "Grep",
+  "tool_input": {
+    "pattern": "contextTypes"
+  },
+  "tool_use_id": "tool_s1",
+  "cwd": "/work/app"
+}

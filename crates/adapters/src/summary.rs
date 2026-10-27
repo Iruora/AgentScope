@@ -38,11 +38,13 @@ fn first_line(text: &str) -> &str {
         .unwrap_or("")
 }
 
-/// Summarizes a tool call from its name and input.
+/// Summarizes a tool call from its name and input. Knows the tool names of
+/// every supported harness: Claude Code's `Bash`, Codex's `apply_patch`,
+/// Copilot CLI's `view` and `create`, Cursor's `Shell`.
 pub fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
     let name = display_tool(tool);
-    let text = match tool {
-        "Bash" | "BashOutput" | "PowerShell" | "shell" | "Shell" => {
+    let text = match tool.to_ascii_lowercase().as_str() {
+        "bash" | "bashoutput" | "powershell" | "shell" | "run_terminal_cmd" => {
             str_field(input, &["command", "cmd"]).map(|c| {
                 let more = if c.trim().lines().nth(1).is_some() {
                     " …"
@@ -53,19 +55,36 @@ pub fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
             })
         }
         // File tools read as "Edit src/app.ts".
-        "Read" | "Write" | "Edit" | "MultiEdit" | "NotebookEdit" | "NotebookRead" => {
-            str_field(input, &["file_path", "notebook_path", "path"])
-                .map(|p| format!("{name} {}", display_path(p, cwd)))
+        "read" | "write" | "edit" | "multiedit" | "notebookedit" | "notebookread" | "view"
+        | "create" | "delete" | "str_replace_editor" | "read_file" | "edit_file" => str_field(
+            input,
+            &["file_path", "notebook_path", "path", "target_file"],
+        )
+        .map(|p| format!("{name} {}", display_path(p, cwd))),
+        "apply_patch" => str_field(input, &["command", "input", "patch"])
+            .and_then(patched_file)
+            .map(|p| format!("Edit {}", display_path(p, cwd))),
+        "glob" | "grep" | "rg" => {
+            str_field(input, &["pattern", "query"]).map(|p| format!("{name}: {p}"))
         }
-        "Glob" | "Grep" => str_field(input, &["pattern"]).map(|p| format!("{name}: {p}")),
-        "WebFetch" => str_field(input, &["url"]).map(|u| format!("{name}: {u}")),
-        "WebSearch" => str_field(input, &["query"]).map(|q| format!("{name}: {q}")),
-        "Task" | "Agent" => str_field(input, &["description", "prompt"])
+        "webfetch" | "web_fetch" => str_field(input, &["url"]).map(|u| format!("{name}: {u}")),
+        "websearch" | "web_search" => str_field(input, &["query"]).map(|q| format!("{name}: {q}")),
+        "task" | "agent" | "spawn_agent" => str_field(input, &["description", "prompt", "message"])
             .map(|d| format!("{name}: {}", first_line(d))),
-        "Skill" => str_field(input, &["skill", "command"]).map(|s| format!("{name}: {s}")),
+        "skill" => str_field(input, &["skill", "command"]).map(|s| format!("{name}: {s}")),
         _ => None,
     };
     truncate(&redact_text(&text.unwrap_or(name)), SUMMARY_MAX_CHARS)
+}
+
+/// The first file an `apply_patch` envelope touches.
+fn patched_file(patch: &str) -> Option<&str> {
+    patch.lines().find_map(|l| {
+        ["*** Update File: ", "*** Add File: ", "*** Delete File: "]
+            .iter()
+            .find_map(|p| l.trim().strip_prefix(p))
+            .map(str::trim)
+    })
 }
 
 /// `mcp__github__create_issue` reads as `github · create_issue`.
@@ -107,6 +126,22 @@ mod tests {
         assert_eq!(
             tool_summary("mcp__github__create_issue", &json!({}), cwd),
             "github · create_issue"
+        );
+        assert_eq!(
+            tool_summary(
+                "apply_patch",
+                &json!({ "command": "*** Begin Patch\n*** Update File: /repo/src/a.rs\n@@" }),
+                cwd
+            ),
+            "Edit src/a.rs"
+        );
+        assert_eq!(
+            tool_summary("view", &json!({ "path": "/repo/README.md" }), cwd),
+            "view README.md"
+        );
+        assert_eq!(
+            tool_summary("Shell", &json!({ "command": "ls" }), cwd),
+            "Shell: ls"
         );
     }
 

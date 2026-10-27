@@ -55,7 +55,32 @@ fn is_secret_name(name: &str) -> bool {
 /// Replaces secrets-looking substrings of `text`.
 pub fn redact_text(text: &str) -> String {
     let text = redact_assignments(text);
+    let text = redact_url_passwords(&text);
     redact_tokens(&text)
+}
+
+/// `scheme://user:password@host` keeps the user and drops the password.
+fn redact_url_passwords(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(pos) = rest.find("://") {
+        let (head, tail) = rest.split_at(pos + 3);
+        out.push_str(head);
+        let authority = tail
+            .find(|c: char| c.is_whitespace() || matches!(c, '/' | '?' | '#' | '"' | '\''))
+            .unwrap_or(tail.len());
+        match tail[..authority].rfind('@') {
+            Some(at) if tail[..at].contains(':') => {
+                let colon = tail[..at].find(':').expect("checked above");
+                out.push_str(&tail[..=colon]);
+                out.push_str(REDACTED);
+                rest = &tail[at..];
+            }
+            _ => rest = tail,
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 /// `NAME=value`, `NAME: value`, and `--name value` where NAME looks secret.
@@ -174,6 +199,22 @@ pub fn truncate(text: &str, max: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redacts_url_passwords() {
+        assert_eq!(
+            redact_text("DATABASE_URL=postgres://admin:hunter2@db/prod migrate"),
+            "DATABASE_URL=postgres://admin:[redacted]@db/prod migrate"
+        );
+        assert_eq!(
+            redact_text("see https://example.com/a:b@c"),
+            "see https://example.com/a:b@c"
+        );
+        assert_eq!(
+            redact_text("git@github.com:o/r.git"),
+            "git@github.com:o/r.git"
+        );
+    }
 
     #[test]
     fn redacts_known_token_formats() {

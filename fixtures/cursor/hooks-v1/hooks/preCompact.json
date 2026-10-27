@@ -1,0 +1,19 @@
+{
+  "conversation_id": "c0ffee00-1111-4222-8333-444455556666",
+  "generation_id": "gen-1",
+  "model": "claude-sonnet-5.5",
+  "cursor_version": "2.6.0",
+  "workspace_roots": [
+    "/work/app"
+  ],
+  "user_email": "dev@example.com",
+  "transcript_path": "/home/dev/.cursor/projects/work-app/agent-transcripts/c0ffee00-1111-4222-8333-444455556666.jsonl",
+  "hook_event_name": "preCompact",
+  "trigger": "auto",
+  "context_usage_percent": 85,
+  "context_tokens": 170000,
+  "context_window_size": 200000,
+  "message_count": 40,
+  "messages_to_compact": 30,
+  "is_first_compaction": true
+}

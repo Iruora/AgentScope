@@ -82,6 +82,16 @@ pub enum EventKind {
         detail: Option<serde_json::Value>,
         confidence: Confidence,
     },
+    /// A tool call that may be waiting on a prompt the harness does not
+    /// report (Cursor). If no result arrives within a few seconds it turns
+    /// into an inferred approval; see [`crate::Graph::due_possible_approvals`].
+    ApprovalPossible {
+        approval_id: String,
+        tool: String,
+        summary: String,
+        #[specta(type = Option<specta_typescript::Unknown>)]
+        detail: Option<serde_json::Value>,
+    },
     ApprovalResolved {
         /// `None` resolves every open approval of the agent.
         approval_id: Option<String>,
@@ -121,6 +131,7 @@ impl EventKind {
             EventKind::ToolFinished => "toolFinished",
             EventKind::ToolFailed { .. } => "toolFailed",
             EventKind::ApprovalRequested { .. } => "approvalRequested",
+            EventKind::ApprovalPossible { .. } => "approvalPossible",
             EventKind::ApprovalResolved { .. } => "approvalResolved",
             EventKind::WaitingForInput => "waitingForInput",
             EventKind::TurnCompleted => "turnCompleted",

@@ -1,0 +1,20 @@
+{
+  "conversation_id": "c0ffee00-1111-4222-8333-444455556666",
+  "generation_id": "gen-1",
+  "model": "claude-sonnet-5.5",
+  "cursor_version": "2.6.0",
+  "workspace_roots": [
+    "/work/app"
+  ],
+  "user_email": "dev@example.com",
+  "transcript_path": "/home/dev/.cursor/projects/work-app/agent-transcripts/c0ffee00-1111-4222-8333-444455556666.jsonl",
+  "hook_event_name": "preToolUse",
+  "tool_name": "Shell",
+  "tool_input": {
+    "command": "npm install react@19 react-dom@19",
+    "cwd": "/work/app"
+  },
+  "tool_use_id": "tool_01",
+  "cwd": "/work/app",
+  "agent_message": "Installing"
+}

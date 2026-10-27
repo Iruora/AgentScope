@@ -6,15 +6,22 @@ A cross-platform desktop app that shows every local AI coding agent (Claude Code
 
 - [v1 spec](docs/SPEC.md)
 - [Harness research](docs/research/harnesses.md)
-- [Claude Code adapter notes](docs/adapters/claude-code.md)
+- Adapter notes: [Claude Code](docs/adapters/claude-code.md), [Codex](docs/adapters/codex.md),
+  [Copilot CLI](docs/adapters/copilot-cli.md), [Cursor](docs/adapters/cursor.md)
 
 ## Status
 
-Claude Code works end to end: live sessions and subagents, pending approvals,
-the session timeline, notifications, and Go to agent. Connect it in
-Settings → Integrations, which adds observe-only hooks to
-`~/.claude/settings.json` after showing you the diff. Codex, Copilot CLI, and
-Cursor are detected but not followed yet.
+All four harnesses are followed: live sessions and subagents, pending
+approvals, the session timeline, notifications, and Go to agent. Connect each
+one in Settings → Integrations, which adds observe-only hooks after showing
+you the diff:
+
+| Harness | Hook config | Also reads |
+|---|---|---|
+| Claude Code | `~/.claude/settings.json` | transcripts, `~/.claude/sessions` |
+| Codex | `~/.codex/hooks.json` (trust it once with `/hooks` in Codex) | rollouts in `~/.codex/sessions` |
+| Copilot CLI | its own file, `~/.copilot/hooks/agentscope.json` | `events.jsonl` and lock files in `~/.copilot/session-state` |
+| Cursor | `~/.cursor/hooks.json` | hooks only; approvals are inferred and shown as *maybe waiting* |
 
 ## Repository layout
 
@@ -53,8 +60,9 @@ cargo build --release -p agentscope-hook
 ```
 
 Set `AGENTSCOPE_DATA_DIR` to run the app and the shim against a scratch data
-directory instead of your real one, and `CLAUDE_CONFIG_DIR` to point the Claude
-Code adapter at a scratch config instead of `~/.claude`. To send a test event by hand while the app
+directory instead of your real one. `CLAUDE_CONFIG_DIR`, `CODEX_HOME`, and
+`COPILOT_HOME` point those adapters at scratch configs, as they do for the
+harnesses themselves. To send a test event by hand while the app
 is running:
 
 ```sh

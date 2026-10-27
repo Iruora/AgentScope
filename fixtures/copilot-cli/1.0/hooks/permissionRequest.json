@@ -1,0 +1,10 @@
+{
+  "sessionId": "7c1e2d3f-4a5b-4c6d-8e9f-0a1b2c3d4e5f",
+  "cwd": "/work/web",
+  "timestamp": 1793095205000,
+  "toolName": "bash",
+  "toolInput": {
+    "command": "GITHUB_TOKEN=ghp_abcdefghijklmnopqrstuvwxyz0123456789 gh pr create --fill",
+    "description": "Open the PR"
+  }
+}

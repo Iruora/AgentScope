@@ -3,6 +3,7 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, VecDeque};
 
+use chrono::Duration;
 use serde::{Deserialize, Serialize};
 use specta::Type;
 
@@ -53,6 +54,9 @@ pub struct Graph {
     sessions: BTreeMap<String, Session>,
     agents: BTreeMap<String, Agent>,
     approvals: BTreeMap<String, PendingApproval>,
+    /// [`EventKind::ApprovalPossible`] per agent id, until a result clears it.
+    /// Not persisted: after a restart the tool has long finished or prompted.
+    possible: BTreeMap<String, AgentEvent>,
     seen: HashMap<String, EventSource>,
     seen_order: VecDeque<String>,
 }
@@ -103,6 +107,39 @@ impl Graph {
         }
     }
 
+    /// Possible approvals with no result for `after`, as inferred
+    /// [`EventKind::ApprovalRequested`] events for the caller to apply.
+    pub fn due_possible_approvals(&mut self, now: Timestamp, after: Duration) -> Vec<AgentEvent> {
+        let due: Vec<String> = self
+            .possible
+            .iter()
+            .filter(|(_, ev)| now - ev.at >= after)
+            .map(|(id, _)| id.clone())
+            .collect();
+        due.into_iter()
+            .filter_map(|id| self.possible.remove(&id))
+            .filter_map(|ev| match ev.kind {
+                EventKind::ApprovalPossible {
+                    approval_id,
+                    tool,
+                    summary,
+                    detail,
+                } => Some(AgentEvent {
+                    dedupe_key: None,
+                    kind: EventKind::ApprovalRequested {
+                        approval_id,
+                        tool,
+                        summary,
+                        detail,
+                        confidence: Confidence::Inferred,
+                    },
+                    ..ev
+                }),
+                _ => None,
+            })
+            .collect()
+    }
+
     pub fn snapshot(&self) -> Snapshot {
         let mut sessions: Vec<Session> = self.sessions.values().cloned().collect();
         sessions.sort_by_key(|s| std::cmp::Reverse(s.last_event_at));
@@ -149,6 +186,17 @@ impl Graph {
                 .ended_at = None;
         }
         let agent_id = self.ensure_agent(ev, &session_id, &mut changes);
+
+        match &ev.kind {
+            // Anything but another tool start means the agent moved on.
+            EventKind::ToolStarted { .. } | EventKind::Heartbeat { .. } => {}
+            EventKind::SessionEnded => self
+                .possible
+                .retain(|_, p| Session::key(p.harness, &p.session) != session_id),
+            _ => {
+                self.possible.remove(&agent_id);
+            }
+        }
 
         match &ev.kind {
             EventKind::SessionStarted {
@@ -297,6 +345,19 @@ impl Graph {
                     Confidence::Inferred => AgentState::MaybeWaiting,
                 };
                 self.set_agent_state(&agent_id, state, ev.at);
+            }
+            EventKind::ApprovalPossible { tool, summary, .. } => {
+                self.possible.insert(agent_id.clone(), ev.clone());
+                let agent = self.agents.get_mut(&agent_id).expect("ensured above");
+                if agent.state != AgentState::RunningTool {
+                    agent.state = AgentState::RunningTool;
+                    agent.current_activity = Some(Activity {
+                        kind: ActivityKind::Tool,
+                        tool: Some(tool.clone()),
+                        summary: summary.clone(),
+                        started_at: ev.at,
+                    });
+                }
             }
             EventKind::ApprovalResolved {
                 approval_id,
@@ -880,6 +941,59 @@ mod tests {
         );
         assert!(changes.is_empty());
         assert!(s.graph.snapshot().sessions.is_empty());
+    }
+
+    fn possible(id: &str) -> EventKind {
+        EventKind::ApprovalPossible {
+            approval_id: id.into(),
+            tool: "Shell".into(),
+            summary: "Shell: npm publish".into(),
+            detail: None,
+        }
+    }
+
+    #[test]
+    fn possible_approvals_turn_into_inferred_ones_without_a_result() {
+        let mut s = Script::new();
+        s.apply(None, started());
+        s.apply(None, possible("g1"));
+        assert_eq!(s.session().state, AgentState::RunningTool);
+        let at = s.ev(None, None, EventKind::ToolFinished).at;
+        assert!(s
+            .graph
+            .due_possible_approvals(at, Duration::seconds(5))
+            .is_empty());
+
+        let due = s
+            .graph
+            .due_possible_approvals(at + Duration::seconds(10), Duration::seconds(5));
+        assert_eq!(due.len(), 1);
+        assert!(matches!(
+            due[0].kind,
+            EventKind::ApprovalRequested {
+                confidence: Confidence::Inferred,
+                ..
+            }
+        ));
+        s.graph.apply(&due[0]);
+        assert_eq!(s.session().state, AgentState::MaybeWaiting);
+        assert!(
+            s.graph
+                .due_possible_approvals(at + Duration::seconds(60), Duration::seconds(5))
+                .is_empty(),
+            "promoted once"
+        );
+        s.apply(None, EventKind::ToolFinished);
+        assert!(s.graph.snapshot().approvals.is_empty());
+        assert_eq!(s.session().state, AgentState::Thinking);
+
+        // A result in time clears it.
+        s.apply(None, possible("g2"));
+        s.apply(None, EventKind::ToolFinished);
+        assert!(s
+            .graph
+            .due_possible_approvals(at + Duration::seconds(60), Duration::seconds(5))
+            .is_empty());
     }
 
     #[test]
