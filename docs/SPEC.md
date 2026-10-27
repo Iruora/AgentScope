@@ -341,3 +341,7 @@ Decided (2026-10-27):
 - The hook shim is named **`agentscope-hook`**.
 - Stack is **Tauri 2 + Rust core + React/TypeScript** (no need to match
   Merge Flow).
+- v1.0.0 ships **unsigned** on every platform: AgentScope is free and open
+  source, and there is no free signing for macOS. The README covers the
+  one-time first-launch step, and the release workflow can sign later by
+  adding secrets. The in-app updater is left for a later release.

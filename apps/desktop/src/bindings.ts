@@ -401,6 +401,10 @@ export type Settings_Deserialize = {
 	notifyApprovals?: boolean,
 	/**  Notify when an agent finishes a turn or asks a question. */
 	notifyInput?: boolean,
+	/**  How long ended sessions stay in History. */
+	retentionDays?: number,
+	/**  The first-run welcome was finished or skipped. */
+	onboarded?: boolean,
 };
 
 export type Settings_Serialize = {
@@ -408,6 +412,10 @@ export type Settings_Serialize = {
 	notifyApprovals: boolean,
 	/**  Notify when an agent finishes a turn or asks a question. */
 	notifyInput: boolean,
+	/**  How long ended sessions stay in History. */
+	retentionDays: number,
+	/**  The first-run welcome was finished or skipped. */
+	onboarded: boolean,
 };
 
 /**  What the UI renders. */
