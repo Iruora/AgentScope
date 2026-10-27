@@ -327,7 +327,7 @@ Suppressed when the agent's terminal is already focused (best effort).
    Cursor inferred approvals, onboarding, History, signed installers, README,
    v1.0.0.
 
-## 8. Decisions and open questions
+## 8. Decisions
 
 Decided (2026-10-27):
 
