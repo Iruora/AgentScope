@@ -2,6 +2,8 @@ name: Release
 
 # Pushing a tag like v1.0.0 builds the installers for every platform and
 # attaches them to a draft GitHub release. Review the draft, then publish it.
+# Running it by hand from the Actions tab with a tag that does not exist yet
+# creates that tag on the commit it runs from (usually main) first.
 #
 # Builds are unsigned. To sign later, add the secrets Tauri reads (APPLE_*
 # for macOS, a Windows certificate or signCommand) and pass them in `env`
@@ -13,7 +15,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: Existing tag to build, e.g. v1.0.0
+        description: Tag to build, e.g. v1.0.0 (created on the selected branch if missing)
         required: true
 
 permissions:
@@ -30,6 +32,14 @@ jobs:
     outputs:
       release-id: ${{ steps.release.outputs.id }}
     steps:
+      - name: Create the tag if it does not exist yet
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --silent 2>/dev/null; then
+            gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
+          fi
       - uses: actions/checkout@v4
         with:
           ref: ${{ env.TAG }}
