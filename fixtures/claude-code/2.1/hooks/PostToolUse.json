@@ -1,0 +1,18 @@
+{
+  "session_id": "5f0c7a52-1d1e-4c3b-9d7e-0b8e6f1a2c11",
+  "transcript_path": "/home/dev/.claude/projects/-work-shop/5f0c7a52-1d1e-4c3b-9d7e-0b8e6f1a2c11.jsonl",
+  "cwd": "/work/shop",
+  "permission_mode": "default",
+  "hook_event_name": "PostToolUse",
+  "prompt_id": "4b1d2c3e-0000-4000-8000-000000000001",
+  "tool_name": "Bash",
+  "tool_input": {
+    "command": "npm test -- checkout"
+  },
+  "tool_response": {
+    "stdout": "ok",
+    "stderr": "",
+    "interrupted": false
+  },
+  "tool_use_id": "toolu_01A"
+}

@@ -4,11 +4,16 @@ description = "Per-harness adapters that translate hooks and transcripts into Ag
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [dependencies]
 agentscope-core.workspace = true
+chrono.workspace = true
 dirs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 specta.workspace = true
 thiserror.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

@@ -4,6 +4,7 @@ description = "AgentScope desktop app"
 version.workspace = true
 edition.workspace = true
 repository.workspace = true
+license.workspace = true
 
 [lib]
 name = "agentscope_desktop_lib"
@@ -16,12 +17,24 @@ tauri-build = { version = "2", features = [] }
 agentscope-adapters.workspace = true
 agentscope-core.workspace = true
 agentscope-protocol.workspace = true
+chrono.workspace = true
+notify = "8"
 serde.workspace = true
+serde_json.workspace = true
 specta.workspace = true
 specta-typescript.workspace = true
+sysinfo = { version = "0.39", default-features = false, features = ["system"] }
 tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-notification = "2"
+tauri-plugin-opener = "2"
 tauri-plugin-single-instance = "2"
 tauri-specta = { version = "=2.0.0-rc.26", features = ["derive", "typescript"] }
 tokio.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }

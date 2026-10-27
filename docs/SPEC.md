@@ -121,8 +121,10 @@ Settings → Integrations shows each detected harness with **Connect** /
   `~/.codex/hooks.json`, `~/.copilot/hooks/agentscope.json`,
   `~/.cursor/hooks.json`). Never touches project configs.
 - Idempotent and reversible: our entries carry a marker
-  (`"agentscope": true`, or a dedicated file where the harness supports a
-  hooks directory). Disconnect removes exactly those entries.
+  (`"agentscope": true`, a dedicated file where the harness supports a
+  hooks directory, or the shim's file name where the harness validates hook
+  entries strictly, as Claude Code does). Disconnect removes exactly those
+  entries.
 - Backs up the original file before the first edit and shows a diff before
   writing.
 - Observe mode registers only non-blocking events and returns no decision

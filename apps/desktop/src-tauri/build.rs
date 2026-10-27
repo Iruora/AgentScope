@@ -1,4 +1,26 @@
+/// Tauri refuses to build when a sidecar listed in `bundle.externalBin` is
+/// missing, which would break `cargo test` and `cargo clippy`. The real shim is
+/// copied in by `scripts/sidecar.mjs` before `tauri dev` and `tauri build`;
+/// until then an empty placeholder stands in, and the app treats an empty
+/// shim as absent.
+fn ensure_sidecar_placeholder() {
+    let dir = std::path::Path::new(&std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("binaries");
+    let target = std::env::var("TARGET").unwrap();
+    let exe = if target.contains("windows") {
+        ".exe"
+    } else {
+        ""
+    };
+    let path = dir.join(format!("agentscope-hook-{target}{exe}"));
+    if !path.exists() {
+        std::fs::create_dir_all(&dir).expect("failed to create binaries/");
+        std::fs::write(&path, b"").expect("failed to write the sidecar placeholder");
+        println!("cargo:warning=agentscope-hook sidecar missing; wrote an empty placeholder. Run `pnpm sidecar` for a working shim.");
+    }
+}
+
 fn main() {
+    ensure_sidecar_placeholder();
     // tauri-build embeds the Windows app manifest (Common Controls v6) into
     // binaries only, so test executables that link Tauri fail to start with
     // STATUS_ENTRYPOINT_NOT_FOUND. Embed it ourselves for every linked target.

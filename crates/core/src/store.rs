@@ -1,7 +1,8 @@
 //! SQLite persistence. Entities are stored as JSON next to the columns we
 //! query on, so the schema only changes when an index is needed.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 pub use chrono::Duration;
 use chrono::Utc;
@@ -27,7 +28,8 @@ pub enum StoreError {
 
 pub type Result<T> = std::result::Result<T, StoreError>;
 
-const MIGRATIONS: &[&str] = &[r#"
+const MIGRATIONS: &[&str] = &[
+    r#"
     CREATE TABLE sessions (
         id            TEXT PRIMARY KEY,
         harness       TEXT NOT NULL,
@@ -62,7 +64,14 @@ const MIGRATIONS: &[&str] = &[r#"
     );
     CREATE INDEX events_at ON events (at_ms);
     CREATE INDEX events_session ON events (session_id, seq);
-"#];
+"#,
+    r#"
+    CREATE TABLE transcript_offsets (
+        path   TEXT PRIMARY KEY,
+        offset INTEGER NOT NULL
+    );
+"#,
+];
 
 pub struct Store {
     conn: Connection,
@@ -204,6 +213,36 @@ impl Store {
         Ok(removed)
     }
 
+    /// How far each transcript has been read.
+    pub fn transcript_offsets(&self) -> Result<HashMap<PathBuf, u64>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT path, offset FROM transcript_offsets")?;
+        let rows = stmt.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?)))?;
+        let mut out = HashMap::new();
+        for row in rows {
+            let (path, offset) = row?;
+            out.insert(PathBuf::from(path), offset as u64);
+        }
+        Ok(out)
+    }
+
+    pub fn save_offset(&self, path: &Path, offset: u64) -> Result<()> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO transcript_offsets (path, offset) VALUES (?1, ?2)",
+            params![path.to_string_lossy(), offset as i64],
+        )?;
+        Ok(())
+    }
+
+    pub fn forget_offset(&self, path: &Path) -> Result<()> {
+        self.conn.execute(
+            "DELETE FROM transcript_offsets WHERE path = ?1",
+            [path.to_string_lossy()],
+        )?;
+        Ok(())
+    }
+
     pub fn event_count(&self) -> Result<u64> {
         let count: i64 = self
             .conn
@@ -321,6 +360,17 @@ mod tests {
             .collect();
         ids.sort();
         assert_eq!(ids, ["codex:live", "codex:recent"]);
+    }
+
+    #[test]
+    fn offsets_round_trip() {
+        let store = Store::open_in_memory().unwrap();
+        let path = Path::new("/t/a.jsonl");
+        store.save_offset(path, 10).unwrap();
+        store.save_offset(path, 42).unwrap();
+        assert_eq!(store.transcript_offsets().unwrap()[path], 42);
+        store.forget_offset(path).unwrap();
+        assert!(store.transcript_offsets().unwrap().is_empty());
     }
 
     #[test]

@@ -9,11 +9,23 @@ import * as __TAURI_EVENT from "@tauri-apps/api/event";
 export const commands = {
 	getSnapshot: () => __TAURI_INVOKE<Snapshot_Serialize>("get_snapshot"),
 	getAppInfo: () => __TAURI_INVOKE<AppInfo_Serialize>("get_app_info"),
+	getSessionEvents: (sessionId: string) => typedError<AgentEvent_Serialize[], string>(__TAURI_INVOKE("get_session_events", { sessionId })),
+	getIntegrations: () => __TAURI_INVOKE<Integrations_Serialize>("get_integrations"),
+	/**
+	 *  Connects (`connect: true`) or disconnects a harness. With `dry_run` the
+	 *  config is left alone and only the diff is returned, for the preview.
+	 */
+	setHooks: (harness: HarnessId, connect: boolean, dryRun: boolean) => typedError<Diff_Serialize, string>(__TAURI_INVOKE("set_hooks", { harness, connect, dryRun })),
+	goToAgent: (sessionId: string) => typedError<GoToAgent_Serialize, string>(__TAURI_INVOKE("go_to_agent", { sessionId })),
+	revealTranscript: (sessionId: string) => typedError<null, string>(__TAURI_INVOKE("reveal_transcript", { sessionId })),
+	getSettings: () => __TAURI_INVOKE<Settings_Serialize>("get_settings"),
+	setSettings: (settings: Settings_Deserialize) => typedError<null, string>(__TAURI_INVOKE("set_settings", { settings })),
 };
 
 /** Events */
 export const events = {
 	graphChanged: makeEvent<GraphChanged, GraphChanged>("graph-changed"),
+	openSession: makeEvent<OpenSession, OpenSession>("open-session"),
 };
 
 /* Types */
@@ -38,6 +50,42 @@ export type Activity_Serialize = {
 };
 
 export type Agent = Agent_Serialize | Agent_Deserialize;
+
+export type AgentEvent = AgentEvent_Serialize | AgentEvent_Deserialize;
+
+export type AgentEvent_Deserialize = {
+	source: EventSource,
+	/**  The harness's own timestamp when it has one, else when we received it. */
+	at: string,
+	harness: HarnessId,
+	/**  The harness's native session id. */
+	session: string,
+	/**  The harness's native agent id. `None` means the session's main agent. */
+	agent?: string | null,
+	/**
+	 *  `tool_use_id`, `toolCallId`, or an event uuid. Used to merge the same
+	 *  event seen through a hook and a transcript.
+	 */
+	dedupeKey?: string | null,
+	kind: EventKind_Deserialize,
+};
+
+export type AgentEvent_Serialize = {
+	source: EventSource,
+	/**  The harness's own timestamp when it has one, else when we received it. */
+	at: string,
+	harness: HarnessId,
+	/**  The harness's native session id. */
+	session: string,
+	/**  The harness's native agent id. `None` means the session's main agent. */
+	agent: string | null,
+	/**
+	 *  `tool_use_id`, `toolCallId`, or an event uuid. Used to merge the same
+	 *  event seen through a hook and a transcript.
+	 */
+	dedupeKey: string | null,
+	kind: EventKind_Serialize,
+};
 
 export type AgentKind = "main" | "subagent";
 
@@ -121,12 +169,132 @@ export type Detection_Serialize = {
 	version: string | null,
 };
 
+/**  A config change shown to the user before it is written. */
+export type Diff = Diff_Serialize | Diff_Deserialize;
+
+/**  A config change shown to the user before it is written. */
+export type Diff_Deserialize = {
+	path: string,
+	/**  `None` when the file does not exist (yet, or any more). */
+	before?: string | null,
+	after?: string | null,
+	/**  Where the original was copied before the first edit. */
+	backupPath?: string | null,
+};
+
+/**  A config change shown to the user before it is written. */
+export type Diff_Serialize = {
+	path: string,
+	/**  `None` when the file does not exist (yet, or any more). */
+	before: string | null,
+	after: string | null,
+	/**  Where the original was copied before the first edit. */
+	backupPath: string | null,
+};
+
+export type EventKind = EventKind_Serialize | EventKind_Deserialize;
+
+export type EventKind_Deserialize = { type: "sessionStarted"; cwd: string; model?: string | null; transcriptPath?: string | null; pid?: number | null } | { type: "sessionEnded" } | 
+/**  Details learned after the start. `None` fields are left as they are. */
+{ type: "sessionInfo"; cwd?: string | null; model?: string | null; 
+/**  A harness-provided name, preferred over the first prompt. */
+title?: string | null } | { type: "promptSubmitted"; prompt: string } | { type: "agentStarted"; 
+/**  Native id of the spawning agent; `None` means the main agent. */
+parent?: string | null; agentType?: string | null; description?: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error?: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail?: unknown | null; confidence: Confidence } | { type: "approvalResolved"; 
+/**  `None` resolves every open approval of the agent. */
+approvalId?: string | null; resolution: Resolution } | { type: "waitingForInput" } | { type: "turnCompleted" } | { type: "compacted" } | 
+/**  Running totals for the session, replacing earlier ones. */
+{ type: "tokensReported"; tokens: Tokens_Deserialize } | 
+/**  Usage of one model response, added to the session's totals. */
+{ type: "tokensUsed"; tokens: Tokens_Deserialize } | { type: "heartbeat"; pid: number } | { type: "unknown"; event: string; raw: unknown };
+
+export type EventKind_Serialize = { type: "sessionStarted"; cwd: string; model: string | null; transcriptPath: string | null; pid: number | null } | { type: "sessionEnded" } | 
+/**  Details learned after the start. `None` fields are left as they are. */
+{ type: "sessionInfo"; cwd: string | null; model: string | null; 
+/**  A harness-provided name, preferred over the first prompt. */
+title: string | null } | { type: "promptSubmitted"; prompt: string } | { type: "agentStarted"; 
+/**  Native id of the spawning agent; `None` means the main agent. */
+parent: string | null; agentType: string | null; description: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail: unknown | null; confidence: Confidence } | { type: "approvalResolved"; 
+/**  `None` resolves every open approval of the agent. */
+approvalId: string | null; resolution: Resolution } | { type: "waitingForInput" } | { type: "turnCompleted" } | { type: "compacted" } | 
+/**  Running totals for the session, replacing earlier ones. */
+{ type: "tokensReported"; tokens: Tokens_Serialize } | 
+/**  Usage of one model response, added to the session's totals. */
+{ type: "tokensUsed"; tokens: Tokens_Serialize } | { type: "heartbeat"; pid: number } | { type: "unknown"; event: string; raw: unknown };
+
+export type EventSource = "hook" | "transcript" | "scan" | "process";
+
+export type GoToAgent = GoToAgent_Serialize | GoToAgent_Deserialize;
+
+export type GoToAgent_Deserialize = {
+	focused: boolean,
+	/**  The app that was brought forward, e.g. "iTerm2". */
+	app?: string | null,
+	/**
+	 *  When focusing failed: a command for the user to run instead, which the
+	 *  UI copies to the clipboard.
+	 */
+	fallbackCommand?: string | null,
+	message?: string | null,
+};
+
+export type GoToAgent_Serialize = {
+	focused: boolean,
+	/**  The app that was brought forward, e.g. "iTerm2". */
+	app: string | null,
+	/**
+	 *  When focusing failed: a command for the user to run instead, which the
+	 *  UI copies to the clipboard.
+	 */
+	fallbackCommand: string | null,
+	message: string | null,
+};
+
 /**  Emitted whenever the graph changes. The UI refetches the snapshot. */
 export type GraphChanged = {
 	waitingCount: number,
 };
 
 export type HarnessId = "claude-code" | "codex" | "copilot-cli" | "cursor";
+
+export type HookStatus = "not_installed" | "installed" | 
+/**  Written, but the harness has to trust it first (Codex `/hooks`). */
+"needs_trust" | "outdated";
+
+export type Integration = Integration_Serialize | Integration_Deserialize;
+
+export type Integration_Deserialize = {
+	detection: Detection_Deserialize,
+	hookStatus: HookStatus,
+	/**  Whether AgentScope can connect this harness yet. Step 4 adds the rest. */
+	supported: boolean,
+};
+
+export type Integration_Serialize = {
+	detection: Detection_Serialize,
+	hookStatus: HookStatus,
+	/**  Whether AgentScope can connect this harness yet. Step 4 adds the rest. */
+	supported: boolean,
+};
+
+export type Integrations = Integrations_Serialize | Integrations_Deserialize;
+
+export type Integrations_Deserialize = {
+	harnesses: Integration_Deserialize[],
+	/**  Where the bundled `agentscope-hook` is, if it is usable. */
+	shimPath?: string | null,
+};
+
+export type Integrations_Serialize = {
+	harnesses: Integration_Serialize[],
+	/**  Where the bundled `agentscope-hook` is, if it is usable. */
+	shimPath: string | null,
+};
+
+/**  Emitted when the tray or a notification asks to show a session. */
+export type OpenSession = {
+	sessionId: string,
+};
 
 export type PendingApproval = PendingApproval_Serialize | PendingApproval_Deserialize;
 
@@ -218,6 +386,22 @@ export type Session_Serialize = {
 	rootAgentId: string,
 };
 
+export type Settings = Settings_Serialize | Settings_Deserialize;
+
+export type Settings_Deserialize = {
+	/**  Notify when an agent waits for a permission prompt. */
+	notifyApprovals?: boolean,
+	/**  Notify when an agent finishes a turn or asks a question. */
+	notifyInput?: boolean,
+};
+
+export type Settings_Serialize = {
+	/**  Notify when an agent waits for a permission prompt. */
+	notifyApprovals: boolean,
+	/**  Notify when an agent finishes a turn or asks a question. */
+	notifyInput: boolean,
+};
+
 /**  What the UI renders. */
 export type Snapshot = Snapshot_Serialize | Snapshot_Deserialize;
 
@@ -279,6 +463,15 @@ export type Tokens_Serialize = {
 };
 
 /* Tauri Specta runtime */
+async function typedError<T, E>(result: Promise<T>): Promise<{ status: "ok"; data: T } | { status: "error"; error: E }> {
+    try {
+        return { status: "ok", data: await result };
+    } catch (e) {
+        if (e instanceof Error) throw e;
+        return { status: "error", error: e as any };
+    }
+}
+
 type EventEmit<T> = [T] extends [null] ? () => Promise<void> : (payload: T) => Promise<void>;
 
 type EventEmitTo<T> = [T] extends [null] ? (target: __TAURI_EVENT.EventTarget | string) => Promise<void> : (target: __TAURI_EVENT.EventTarget | string, payload: T) => Promise<void>;

@@ -6,6 +6,15 @@ A cross-platform desktop app that shows every local AI coding agent (Claude Code
 
 - [v1 spec](docs/SPEC.md)
 - [Harness research](docs/research/harnesses.md)
+- [Claude Code adapter notes](docs/adapters/claude-code.md)
+
+## Status
+
+Claude Code works end to end: live sessions and subagents, pending approvals,
+the session timeline, notifications, and Go to agent. Connect it in
+Settings → Integrations, which adds observe-only hooks to
+`~/.claude/settings.json` after showing you the diff. Codex, Copilot CLI, and
+Cursor are detected but not followed yet.
 
 ## Repository layout
 
@@ -31,6 +40,11 @@ pnpm tauri dev          # run the app with hot reload
 pnpm tauri build        # build installers into target/release/bundle
 ```
 
+Both Tauri commands first run `pnpm sidecar`, which builds `agentscope-hook`
+and copies it to `src-tauri/binaries/` where Tauri bundles it next to the app.
+Plain `cargo` builds use an empty placeholder there instead, and the app then
+reports the shim as missing.
+
 From the repo root:
 
 ```sh
@@ -39,9 +53,18 @@ cargo build --release -p agentscope-hook
 ```
 
 Set `AGENTSCOPE_DATA_DIR` to run the app and the shim against a scratch data
-directory instead of your real one. To send a test event by hand while the app
+directory instead of your real one, and `CLAUDE_CONFIG_DIR` to point the Claude
+Code adapter at a scratch config instead of `~/.claude`. To send a test event by hand while the app
 is running:
 
 ```sh
 echo '{"session_id":"demo"}' | target/release/agentscope-hook --harness claude-code --event SessionStart
 ```
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option. Unless you explicitly state
+otherwise, any contribution you submit for inclusion in this project, as
+defined in the Apache-2.0 license, is dual licensed as above, without any
+additional terms or conditions.

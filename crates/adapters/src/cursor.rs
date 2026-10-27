@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use agentscope_core::{AgentEvent, HarnessId, RawHookEvent};
 
 use crate::*;
@@ -13,7 +15,7 @@ impl Adapter for Cursor {
         detect_config_dir(self.id(), home_dir(".cursor"))
     }
 
-    fn hooks_status(&self) -> HookStatus {
+    fn hooks_status(&self, _shim_path: &Path) -> HookStatus {
         HookStatus::NotInstalled
     }
 
@@ -21,7 +23,7 @@ impl Adapter for Cursor {
         Err(AdapterError::NotImplemented("hook install"))
     }
 
-    fn uninstall_hooks(&self) -> Result<Diff> {
+    fn uninstall_hooks(&self, _dry_run: bool) -> Result<Diff> {
         Err(AdapterError::NotImplemented("hook uninstall"))
     }
 

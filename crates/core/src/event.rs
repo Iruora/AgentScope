@@ -47,6 +47,13 @@ pub enum EventKind {
         pid: Option<u32>,
     },
     SessionEnded,
+    /// Details learned after the start. `None` fields are left as they are.
+    SessionInfo {
+        cwd: Option<String>,
+        model: Option<String>,
+        /// A harness-provided name, preferred over the first prompt.
+        title: Option<String>,
+    },
     PromptSubmitted {
         prompt: String,
     },
@@ -71,6 +78,7 @@ pub enum EventKind {
         approval_id: String,
         tool: String,
         summary: String,
+        #[specta(type = Option<specta_typescript::Unknown>)]
         detail: Option<serde_json::Value>,
         confidence: Confidence,
     },
@@ -82,7 +90,12 @@ pub enum EventKind {
     WaitingForInput,
     TurnCompleted,
     Compacted,
+    /// Running totals for the session, replacing earlier ones.
     TokensReported {
+        tokens: Tokens,
+    },
+    /// Usage of one model response, added to the session's totals.
+    TokensUsed {
         tokens: Tokens,
     },
     Heartbeat {
@@ -90,6 +103,7 @@ pub enum EventKind {
     },
     Unknown {
         event: String,
+        #[specta(type = specta_typescript::Unknown)]
         raw: serde_json::Value,
     },
 }
@@ -99,6 +113,7 @@ impl EventKind {
         match self {
             EventKind::SessionStarted { .. } => "sessionStarted",
             EventKind::SessionEnded => "sessionEnded",
+            EventKind::SessionInfo { .. } => "sessionInfo",
             EventKind::PromptSubmitted { .. } => "promptSubmitted",
             EventKind::AgentStarted { .. } => "agentStarted",
             EventKind::AgentStopped { .. } => "agentStopped",
@@ -111,8 +126,24 @@ impl EventKind {
             EventKind::TurnCompleted => "turnCompleted",
             EventKind::Compacted => "compacted",
             EventKind::TokensReported { .. } => "tokensReported",
+            EventKind::TokensUsed { .. } => "tokensUsed",
             EventKind::Heartbeat { .. } => "heartbeat",
             EventKind::Unknown { .. } => "unknown",
         }
+    }
+
+    /// Events that show the agent doing something. They reopen a session
+    /// that was marked ended earlier, e.g. after `claude --resume`.
+    pub fn is_activity(&self) -> bool {
+        matches!(
+            self,
+            EventKind::SessionStarted { .. }
+                | EventKind::PromptSubmitted { .. }
+                | EventKind::AgentStarted { .. }
+                | EventKind::ToolStarted { .. }
+                | EventKind::ApprovalRequested { .. }
+                // Only sent for a process that is running right now.
+                | EventKind::Heartbeat { .. }
+        )
     }
 }
