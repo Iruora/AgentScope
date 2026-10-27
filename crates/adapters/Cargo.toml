@@ -1,0 +1,14 @@
+[package]
+name = "agentscope-adapters"
+description = "Per-harness adapters that translate hooks and transcripts into AgentScope events"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[dependencies]
+agentscope-core.workspace = true
+dirs.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+specta.workspace = true
+thiserror.workspace = true

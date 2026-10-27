@@ -1,0 +1,17 @@
+[package]
+name = "agentscope-hook"
+description = "Fail-open hook shim that forwards harness hook payloads to AgentScope"
+version.workspace = true
+edition.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "agentscope-hook"
+path = "src/main.rs"
+
+[dependencies]
+agentscope-protocol.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true

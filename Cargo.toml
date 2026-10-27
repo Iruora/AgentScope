@@ -1,0 +1,43 @@
+[workspace]
+resolver = "2"
+members = [
+    "apps/desktop/src-tauri",
+    "crates/adapters",
+    "crates/core",
+    "crates/hook",
+    "crates/protocol",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+repository = "https://github.com/Iruora/AgentScope"
+
+[workspace.dependencies]
+agentscope-adapters = { path = "crates/adapters" }
+agentscope-core = { path = "crates/core" }
+agentscope-protocol = { path = "crates/protocol" }
+
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "tokio"] }
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+dirs = "7"
+getrandom = "0.3"
+rusqlite = { version = "0.41", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+specta = { version = "=2.0.0-rc.26", features = ["chrono", "derive", "serde_json"] }
+specta-typescript = "0.0.13"
+tempfile = "3"
+thiserror = "2"
+tokio = { version = "1", features = ["macros", "net", "rt-multi-thread", "sync", "time"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+strip = true
+
+# The hook shim runs on every agent tool call, so keep it small and fast to start.
+[profile.release.package.agentscope-hook]
+opt-level = "z"
