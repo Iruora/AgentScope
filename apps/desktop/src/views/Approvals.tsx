@@ -1,6 +1,8 @@
+import { ChevronDown, CircleDashed, Clock, ShieldCheck, TerminalSquare } from "lucide-react";
 import { useState } from "react";
 
 import { GoToAgentButton } from "../components/GoToAgentButton";
+import { Code, EmptyState, Notice, PageIntro, Pill, SectionTitle, cx } from "../components/ui";
 import { useSnapshot } from "../lib/api";
 import { basename, elapsed, harnessNames } from "../lib/format";
 import type { PendingApproval, Session } from "../lib/types";
@@ -14,31 +16,39 @@ export function Approvals({ onOpen }: { onOpen: (sessionId: string) => void }) {
   const sessions = new Map((snapshot.data?.sessions ?? []).map((s) => [s.id, s]));
 
   return (
-    <div className="mx-auto max-w-5xl px-6 py-6">
-      <header className="mb-6">
-        <h1 className="text-xl font-semibold">Approvals</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          AgentScope only watches. Answer each prompt in the agent's own terminal.
-        </p>
-      </header>
+    <div className="mx-auto flex max-w-[1180px] flex-col gap-5">
+      <PageIntro
+        title="Approvals"
+        subtitle="Every permission prompt waiting on you, oldest first."
+      />
+      <Notice tone="accent" icon={ShieldCheck}>
+        AgentScope only watches. Answer each prompt in the agent's own terminal; Go to agent takes you there.
+      </Notice>
 
       {snapshot.isSuccess && approvals.length === 0 && (
-        <div className="rounded-xl border border-dashed border-zinc-300 p-8 text-center text-sm text-zinc-500 dark:border-zinc-700">
-          Nothing is waiting for your approval.
-        </div>
+        <EmptyState icon={ShieldCheck} title="Nothing is waiting for your approval">
+          <p className="mt-1.5 text-[12px] text-muted">New permission prompts show up here the moment an agent asks.</p>
+        </EmptyState>
       )}
 
-      <ul className="space-y-3">
-        {approvals.map((a) => (
-          <ApprovalRow
-            key={a.id}
-            approval={a}
-            session={sessions.get(a.sessionId)}
-            now={now}
-            onOpen={onOpen}
-          />
-        ))}
-      </ul>
+      {approvals.length > 0 && (
+        <section className="flex flex-col gap-3">
+          <SectionTitle count={approvals.length} tone="warn">
+            Waiting
+          </SectionTitle>
+          <ul className="flex flex-col gap-2.5">
+            {approvals.map((a) => (
+              <ApprovalRow
+                key={a.id}
+                approval={a}
+                session={sessions.get(a.sessionId)}
+                now={now}
+                onOpen={onOpen}
+              />
+            ))}
+          </ul>
+        </section>
+      )}
     </div>
   );
 }
@@ -58,44 +68,62 @@ function ApprovalRow({
   const where = session ? (session.repo?.root ?? session.cwd) : "";
 
   return (
-    <li className="rounded-xl border border-zinc-200 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900">
+    <li className="relative flex flex-col gap-2 overflow-hidden rounded-[14px] border border-line bg-surface px-4 py-3.5 shadow-card">
+      <span aria-hidden className="absolute inset-y-0 left-0 w-[3px] bg-warn" />
+      <div className="flex flex-wrap items-center gap-1.5">
+        <span className="text-[11px] font-semibold text-muted">{harnessNames[approval.harness]}</span>
+        {where && (
+          <span className="text-[11px] text-subtle" title={where}>
+            {basename(where)}
+          </span>
+        )}
+        <Pill tone="warn" icon={Clock}>
+          waiting {elapsed(approval.requestedAt, now)}
+        </Pill>
+        {approval.confidence === "inferred" && (
+          <Pill tone="warn" icon={CircleDashed} dashed>
+            inferred
+          </Pill>
+        )}
+      </div>
+
       <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <p className="flex flex-wrap items-center gap-1 text-xs text-zinc-500">
-            <span>{harnessNames[approval.harness]}</span>
-            {where && <span title={where}>· {basename(where)}</span>}
-            <span>· waiting {elapsed(approval.requestedAt, now)}</span>
-            {approval.confidence === "inferred" && (
-              <span className="rounded-full border border-dashed border-amber-400 px-1.5 text-amber-700 dark:text-amber-300">
-                inferred
-              </span>
-            )}
-          </p>
-          <p className="mt-1 truncate font-mono text-sm" title={approval.summary}>
-            {approval.summary}
-          </p>
-          <div className="mt-2 flex gap-3 text-xs">
-            <button type="button" className="text-sky-700 hover:underline dark:text-sky-400" onClick={() => onOpen(approval.sessionId)}>
-              {session?.title ?? "Open session"}
-            </button>
-            {approval.detail != null && (
-              <button
-                type="button"
-                className="text-zinc-500 hover:underline"
-                aria-expanded={expanded}
-                onClick={() => setExpanded((v) => !v)}
-              >
-                {expanded ? "Hide details" : "Show details"}
-              </button>
-            )}
+        <div className="min-w-0 flex-1">
+          <button
+            type="button"
+            onClick={() => onOpen(approval.sessionId)}
+            className="max-w-full truncate text-left text-[14px] font-semibold text-ink hover:text-accent-text"
+          >
+            {session?.title ?? "Open session"}
+          </button>
+          <div className="mt-2 flex items-center gap-2 rounded-[8px] bg-surface-2 px-2.5 py-1.5">
+            <TerminalSquare size={13} className="shrink-0 text-subtle" aria-hidden />
+            <p className="min-w-0 truncate font-mono text-[11.5px] text-ink-2" title={approval.summary}>
+              {approval.summary}
+            </p>
           </div>
         </div>
         <GoToAgentButton sessionId={approval.sessionId} primary />
       </div>
-      {expanded && (
-        <pre className="mt-3 max-h-80 overflow-auto rounded-lg bg-zinc-100 p-3 text-xs dark:bg-zinc-950">
-          {JSON.stringify(approval.detail, null, 2)}
-        </pre>
+
+      {approval.detail != null && (
+        <div>
+          <button
+            type="button"
+            aria-expanded={expanded}
+            onClick={() => setExpanded((v) => !v)}
+            className="inline-flex items-center gap-1 text-[11px] font-semibold text-muted hover:text-ink"
+          >
+            <ChevronDown size={13} className={cx("transition-transform", expanded && "rotate-180")} aria-hidden />
+            {expanded ? "Hide details" : "Show details"}
+            <Code className="ml-1">{approval.tool}</Code>
+          </button>
+          {expanded && (
+            <pre className="mt-2 max-h-80 overflow-auto rounded-[10px] bg-surface-2 p-3 font-mono text-[11px] leading-relaxed text-ink-2">
+              {JSON.stringify(approval.detail, null, 2)}
+            </pre>
+          )}
+        </div>
       )}
     </li>
   );
