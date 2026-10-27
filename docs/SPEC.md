@@ -2,7 +2,7 @@
 
 > Every agent. Every action. One view.
 
-Status: approved, stack pending · 2026-10-26 · Research backing this spec:
+Status: approved · 2026-10-26 · Research backing this spec:
 [docs/research/harnesses.md](research/harnesses.md)
 
 ## 1. Goal
@@ -49,7 +49,7 @@ and which ones are blocked waiting for the user's approval.
 
 Alternatives considered: Electron (heavier, but easier if the team prefers
 pure TS), Wails (Go; smaller ecosystem for tray/updater). Tauri is the best fit
-unless Nidhal's "Merge Flow" stack argues for consistency with something else.
+(decided 2026-10-27).
 
 ### Repo layout (step 2 scaffolds this)
 
@@ -334,8 +334,5 @@ Decided (2026-10-27):
 - Overview groups sessions **by repo** by default (harness grouping is a toggle).
 - Default history retention is **7 days**, configurable.
 - The hook shim is named **`agentscope-hook`**.
-
-Open:
-
-- Stack: Tauri is proposed; whether to align with Merge Flow's stack is still
-  under discussion and must be settled before step 2.
+- Stack is **Tauri 2 + Rust core + React/TypeScript** (no need to match
+  Merge Flow).
