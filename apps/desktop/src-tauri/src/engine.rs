@@ -27,6 +27,10 @@ const STALE_AFTER_MINUTES: i64 = 10;
 /// Transcript events older than this are history: they never notify.
 const LIVE_WINDOW_SECONDS: i64 = 120;
 
+/// A shell or MCP call with no result for this long is probably waiting on
+/// a prompt the harness does not report (Cursor).
+const POSSIBLE_APPROVAL_AFTER_SECONDS: i64 = 6;
+
 /// How deep transcript roots are walked when backfilling.
 const MAX_WALK_DEPTH: usize = 5;
 
@@ -349,6 +353,11 @@ impl Engine {
         }
         drop(procs);
 
+        events.extend(
+            self.lock()
+                .graph
+                .due_possible_approvals(now, Duration::seconds(POSSIBLE_APPROVAL_AFTER_SECONDS)),
+        );
         let mut outcome = self.apply(&events);
 
         // Branches change under a running agent, so re-read them every sweep.

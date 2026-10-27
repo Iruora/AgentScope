@@ -1,8 +1,6 @@
 //! One adapter per harness. Adapters are pure translators: the core owns IO
 //! scheduling, dedupe, and state. See section 3.4 of `docs/SPEC.md`.
 //!
-//! Claude Code is complete. The other adapters only detect installs and match
-//! processes until step 4.
 
 use std::path::{Path, PathBuf};
 
@@ -12,6 +10,7 @@ use specta::Type;
 
 mod claude_code;
 mod codex;
+mod config;
 mod copilot_cli;
 mod cursor;
 pub mod summary;
@@ -48,18 +47,18 @@ pub trait Adapter: Send + Sync {
 pub fn all() -> Vec<Box<dyn Adapter>> {
     vec![
         Box::new(ClaudeCode::new()),
-        Box::new(Codex),
-        Box::new(CopilotCli),
-        Box::new(Cursor),
+        Box::new(Codex::new()),
+        Box::new(CopilotCli::new()),
+        Box::new(Cursor::new()),
     ]
 }
 
 pub fn for_harness(id: HarnessId) -> Box<dyn Adapter> {
     match id {
         HarnessId::ClaudeCode => Box::new(ClaudeCode::new()),
-        HarnessId::Codex => Box::new(Codex),
-        HarnessId::CopilotCli => Box::new(CopilotCli),
-        HarnessId::Cursor => Box::new(Cursor),
+        HarnessId::Codex => Box::new(Codex::new()),
+        HarnessId::CopilotCli => Box::new(CopilotCli::new()),
+        HarnessId::Cursor => Box::new(Cursor::new()),
     }
 }
 
@@ -216,9 +215,16 @@ mod tests {
         assert!(ClaudeCode::new()
             .match_process(&process("claude"))
             .is_some());
-        assert!(Codex.match_process(&process("codex.exe")).is_some());
-        assert!(CopilotCli.match_process(&process("copilot")).is_some());
-        assert!(Cursor.match_process(&process("cursor-agent")).is_some());
+        assert!(Codex::new().match_process(&process("codex.exe")).is_some());
+        assert!(CopilotCli::new()
+            .match_process(&process("copilot"))
+            .is_some());
+        assert!(Cursor::new()
+            .match_process(&process("cursor-agent"))
+            .is_some());
+        assert!(Cursor::new()
+            .match_process(&process("Cursor.exe"))
+            .is_some());
         assert!(ClaudeCode::new()
             .match_process(&process("claude-helper"))
             .is_none());

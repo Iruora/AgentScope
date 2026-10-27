@@ -130,14 +130,13 @@ function IntegrationsSection() {
   );
 }
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .map((w) => w[0])
-    .join("")
-    .slice(0, 2)
-    .toUpperCase();
-}
+// Distinct marks for harnesses whose names share initials.
+const harnessMarks: Record<HarnessId, string> = {
+  "claude-code": "CC",
+  codex: "CX",
+  "copilot-cli": "GH",
+  cursor: "CU",
+};
 
 function IntegrationRow({
   integration,
@@ -150,12 +149,11 @@ function IntegrationRow({
   onConnect: () => void;
   onDisconnect: () => void;
 }) {
-  const { detection, hookStatus, supported } = integration;
+  const { detection, hookStatus } = integration;
   const connected = hookStatus === "installed" || hookStatus === "needs_trust";
   const name = harnessNames[detection.harness];
   let status: ReactNode;
   if (!detection.installed) status = <Pill>Not found on this machine</Pill>;
-  else if (!supported) status = <Pill tone="accent">Coming soon</Pill>;
   else status = <Pill tone={statusTones[hookStatus]}>{statusLabels[hookStatus]}</Pill>;
 
   return (
@@ -167,19 +165,23 @@ function IntegrationRow({
             detection.installed ? "bg-accent-soft text-accent-text" : "bg-surface-3 text-subtle",
           )}
         >
-          {initials(name)}
+          {harnessMarks[detection.harness]}
         </span>
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <p className="text-[13px] font-semibold text-ink">{name}</p>
             {status}
           </div>
-          {detection.configDir && supported && (
-            <Code className="mt-1 inline-block max-w-full">{detection.configDir}</Code>
+          {detection.configDir && <Code className="mt-1 inline-block max-w-full">{detection.configDir}</Code>}
+          {hookStatus === "needs_trust" && (
+            <p className="mt-1.5 text-[11px] text-warn-text">
+              Codex runs new hooks only after you trust them: open Codex, type <code className="font-mono">/hooks</code>,
+              and trust the AgentScope entries.
+            </p>
           )}
         </div>
       </div>
-      {detection.installed && supported && (
+      {detection.installed && (
         <div className="flex gap-2">
           {(connected || hookStatus === "outdated") && (
             <Button size="sm" disabled={disabled} onClick={onDisconnect}>

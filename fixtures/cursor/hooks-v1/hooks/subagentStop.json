@@ -1,0 +1,23 @@
+{
+  "conversation_id": "c0ffee00-1111-4222-8333-444455556666",
+  "generation_id": "gen-1",
+  "model": "claude-sonnet-5.5",
+  "cursor_version": "2.6.0",
+  "workspace_roots": [
+    "/work/app"
+  ],
+  "user_email": "dev@example.com",
+  "transcript_path": "/home/dev/.cursor/projects/work-app/agent-transcripts/c0ffee00-1111-4222-8333-444455556666.jsonl",
+  "hook_event_name": "subagentStop",
+  "subagent_type": "explore",
+  "status": "completed",
+  "task": "Find components using legacy context",
+  "description": "Find legacy context",
+  "summary": "Two components",
+  "duration_ms": 4000,
+  "message_count": 3,
+  "tool_call_count": 2,
+  "loop_count": 0,
+  "modified_files": [],
+  "agent_transcript_path": null
+}

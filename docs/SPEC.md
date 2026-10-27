@@ -133,6 +133,9 @@ Settings → Integrations shows each detected harness with **Connect** /
   the new hook, and show "Waiting for first event" until one arrives.
 - Copilot CLI also reads `.claude/settings.json` hooks; the shim's
   `--harness` flag plus payload shape (camelCase vs snake_case) dedupe this.
+- Copilot CLI denies a tool call when a `preToolUse` command fails, so
+  AgentScope does not register it there; tool calls come from the session's
+  `events.jsonl`, which Copilot writes live.
 
 ### 3.4 Adapter interface
 
@@ -242,12 +245,12 @@ Hook events win over transcript events for the same key.
 | Normalized | Claude Code | Codex | Copilot CLI | Cursor |
 |---|---|---|---|---|
 | SessionStarted | `SessionStart` | `SessionStart` | `sessionStart` | `sessionStart` |
-| AgentStarted | `SubagentStart` | `SubagentStart` | `subagentStart` | `subagentStart` |
+| AgentStarted | `SubagentStart` | `SubagentStart` | first event with `agentId` | `subagentStart` |
 | AgentStopped | `SubagentStop` | `SubagentStop` | `subagentStop` | `subagentStop` |
-| ToolStarted | `PreToolUse` | `PreToolUse` | `preToolUse` | `preToolUse`, `before*Execution` |
-| ApprovalRequested | `PermissionRequest`, `Notification:permission_prompt` | `PermissionRequest` | `permissionRequest` | inferred from `before*Execution` with no `after*` |
-| ApprovalResolved | `PostToolUse` / `PermissionDenied` / `Stop` | `PostToolUse` / `Stop` | `postToolUse*` / `agentStop` | matching `after*` |
-| WaitingForInput | `Notification:idle_prompt`, `Stop` | `Stop` | `agentStop`, `notification` | `stop` |
+| ToolStarted | `PreToolUse` | `PreToolUse` | `tool.execution_start` (events.jsonl) | `preToolUse` |
+| ApprovalRequested | `PermissionRequest` | `PermissionRequest` | `notification:permission_prompt` (tool from `permissionRequest`) | inferred: `preToolUse` (shell, MCP) with no result in 6 s |
+| ApprovalResolved | `PostToolUse` / `PermissionDenied` / `Stop` | `PostToolUse` / `Stop` | `tool.execution_complete` / `agentStop` | `postToolUse*` |
+| WaitingForInput | `Notification:idle_prompt`, `Stop` | `Stop` | `agentStop`, `notification:elicitation_dialog` | `stop` |
 | SessionEnded | `SessionEnd`, process gone | `SessionEnd` | `sessionEnd`, lock file gone | `sessionEnd` |
 
 ### 4.4 Storage

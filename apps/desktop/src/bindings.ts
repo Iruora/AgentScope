@@ -200,7 +200,13 @@ export type EventKind_Deserialize = { type: "sessionStarted"; cwd: string; model
 /**  A harness-provided name, preferred over the first prompt. */
 title?: string | null } | { type: "promptSubmitted"; prompt: string } | { type: "agentStarted"; 
 /**  Native id of the spawning agent; `None` means the main agent. */
-parent?: string | null; agentType?: string | null; description?: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error?: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail?: unknown | null; confidence: Confidence } | { type: "approvalResolved"; 
+parent?: string | null; agentType?: string | null; description?: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error?: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail?: unknown | null; confidence: Confidence } | 
+/**
+ *  A tool call that may be waiting on a prompt the harness does not
+ *  report (Cursor). If no result arrives within a few seconds it turns
+ *  into an inferred approval; see [`crate::Graph::due_possible_approvals`].
+ */
+{ type: "approvalPossible"; approvalId: string; tool: string; summary: string; detail?: unknown | null } | { type: "approvalResolved"; 
 /**  `None` resolves every open approval of the agent. */
 approvalId?: string | null; resolution: Resolution } | { type: "waitingForInput" } | { type: "turnCompleted" } | { type: "compacted" } | 
 /**  Running totals for the session, replacing earlier ones. */
@@ -214,7 +220,13 @@ export type EventKind_Serialize = { type: "sessionStarted"; cwd: string; model: 
 /**  A harness-provided name, preferred over the first prompt. */
 title: string | null } | { type: "promptSubmitted"; prompt: string } | { type: "agentStarted"; 
 /**  Native id of the spawning agent; `None` means the main agent. */
-parent: string | null; agentType: string | null; description: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail: unknown | null; confidence: Confidence } | { type: "approvalResolved"; 
+parent: string | null; agentType: string | null; description: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail: unknown | null; confidence: Confidence } | 
+/**
+ *  A tool call that may be waiting on a prompt the harness does not
+ *  report (Cursor). If no result arrives within a few seconds it turns
+ *  into an inferred approval; see [`crate::Graph::due_possible_approvals`].
+ */
+{ type: "approvalPossible"; approvalId: string; tool: string; summary: string; detail: unknown | null } | { type: "approvalResolved"; 
 /**  `None` resolves every open approval of the agent. */
 approvalId: string | null; resolution: Resolution } | { type: "waitingForInput" } | { type: "turnCompleted" } | { type: "compacted" } | 
 /**  Running totals for the session, replacing earlier ones. */
@@ -266,15 +278,11 @@ export type Integration = Integration_Serialize | Integration_Deserialize;
 export type Integration_Deserialize = {
 	detection: Detection_Deserialize,
 	hookStatus: HookStatus,
-	/**  Whether AgentScope can connect this harness yet. Step 4 adds the rest. */
-	supported: boolean,
 };
 
 export type Integration_Serialize = {
 	detection: Detection_Serialize,
 	hookStatus: HookStatus,
-	/**  Whether AgentScope can connect this harness yet. Step 4 adds the rest. */
-	supported: boolean,
 };
 
 export type Integrations = Integrations_Serialize | Integrations_Deserialize;

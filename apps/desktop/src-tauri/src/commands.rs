@@ -31,8 +31,6 @@ pub struct AppInfo {
 pub struct Integration {
     pub detection: Detection,
     pub hook_status: HookStatus,
-    /// Whether AgentScope can connect this harness yet. Step 4 adds the rest.
-    pub supported: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -99,7 +97,6 @@ pub fn get_integrations(
             hook_status: shim.as_deref().map_or(HookStatus::NotInstalled, |s| {
                 engine.hooks_status(detection.harness, s)
             }),
-            supported: detection.harness == HarnessId::ClaudeCode,
             detection,
         })
         .collect();
