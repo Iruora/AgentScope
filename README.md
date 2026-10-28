@@ -16,9 +16,9 @@ Download the installer for your system from the [latest release](https://github.
 
 | System | File |
 |---|---|
-| macOS (Apple silicon) | `AgentScope_<version>_aarch64.dmg` |
-| macOS (Intel) | `AgentScope_<version>_x64.dmg` |
-| Windows | `AgentScope_<version>_x64-setup.exe` (or the `.msi`) |
+| macOS (Apple silicon) | `AgentScope_<version>_aarch64.dmg` (or `.app.zip`) |
+| macOS (Intel) | `AgentScope_<version>_x64.dmg` (or `.app.zip`) |
+| Windows | `AgentScope_<version>_x64-setup.exe` (or the `.msi`), or `_x64_portable.zip` to run without installing |
 | Linux | `.AppImage`, `.deb` (Debian, Ubuntu) or `.rpm` (Fedora) |
 
 The builds are not code signed yet, so macOS and Windows ask you to confirm once before the first launch:
