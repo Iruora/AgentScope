@@ -66,11 +66,16 @@ jobs:
           }
           id=$(find_id)
           if [ -z "$id" ]; then
-            gh release create "$TAG" --draft --verify-tag --title "AgentScope $TAG" --notes-file .github/release-notes.md
-            id=$(find_id)
+            # Take the id from the response: a fresh draft can take a moment to show up in the list.
+            id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" \
+              -f name="AgentScope $TAG" -F draft=true -F body=@.github/release-notes.md --jq .id)
           else
             # A rerun refreshes the notes of the existing draft.
             gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F body=@.github/release-notes.md --silent
+          fi
+          if [ -z "$id" ]; then
+            echo "::error::Could not find or create the draft release for $TAG"
+            exit 1
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
