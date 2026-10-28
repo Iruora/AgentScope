@@ -63,6 +63,9 @@ jobs:
           if [ -z "$id" ]; then
             gh release create "$TAG" --draft --verify-tag --title "AgentScope $TAG" --notes-file .github/release-notes.md
             id=$(find_id)
+          else
+            # A rerun refreshes the notes of the existing draft.
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F body=@.github/release-notes.md --silent
           fi
           echo "id=$id" >> "$GITHUB_OUTPUT"
 
@@ -76,15 +79,19 @@ jobs:
           - name: macOS Apple silicon
             os: macos-latest
             target: aarch64-apple-darwin
+            arch: aarch64
           - name: macOS Intel
             os: macos-latest
             target: x86_64-apple-darwin
+            arch: x64
           - name: Linux
             os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
+            arch: amd64
           - name: Windows
             os: windows-latest
             target: x86_64-pc-windows-msvc
+            arch: x64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -118,3 +125,42 @@ jobs:
           projectPath: apps/desktop
           args: --target ${{ matrix.target }}
           releaseId: ${{ needs.create-release.outputs.release-id }}
+      - name: Zip the macOS app
+        if: runner.os == 'macOS'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release-id }}
+        run: |
+          version=$(node -p "require('./apps/desktop/src-tauri/tauri.conf.json').version")
+          zip="AgentScope_${version}_${{ matrix.arch }}.app.zip"
+          # ditto keeps the bundle's signature and symlinks intact.
+          ditto -c -k --keepParent "target/${{ matrix.target }}/release/bundle/macos/AgentScope.app" "$zip"
+          # A rerun replaces the zip from the previous attempt.
+          old=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --jq ".[] | select(.name == \"$zip\") | .id")
+          if [ -n "$old" ]; then gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old"; fi
+          gh api --method POST -H "Content-Type: application/zip" \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=$zip" \
+            --input "$zip" --silent
+      - name: Zip the portable Windows app
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release-id }}
+        run: |
+          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version
+          $out = "target/${{ matrix.target }}/release"
+          $dir = New-Item -ItemType Directory -Force -Path "portable/AgentScope"
+          # The app looks for agentscope-hook.exe next to itself.
+          Copy-Item "$out/agentscope-desktop.exe" "$dir/AgentScope.exe"
+          Copy-Item "$out/agentscope-hook.exe" "$dir/agentscope-hook.exe"
+          $zip = "AgentScope_${version}_${{ matrix.arch }}_portable.zip"
+          Compress-Archive -Path $dir -DestinationPath $zip -Force
+          # A rerun replaces the zip from the previous attempt.
+          $jq = '.[] | select(.name == "' + $zip + '") | .id'
+          $old = gh api "repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID/assets" --jq $jq
+          if ($old) { gh api --method DELETE "repos/$env:GITHUB_REPOSITORY/releases/assets/$old" }
+          gh api --method POST -H "Content-Type: application/zip" `
+            "https://uploads.github.com/repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID/assets?name=$zip" `
+            --input $zip --silent
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
