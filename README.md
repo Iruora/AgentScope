@@ -101,7 +101,8 @@ echo '{"session_id":"demo"}' | target/release/agentscope-hook --harness claude-c
    `apps/desktop/package.json` and the root `Cargo.toml`, and merge that.
 2. Tag the merge commit and push the tag: `git tag v1.0.0 && git push origin v1.0.0`.
    Without a terminal, run the Release workflow from the Actions tab on `main`
-   with the tag name instead; it creates the tag for you.
+   with the tag name instead; it creates the tag for you. Tick **publish** to
+   have it publish the release once every download is attached.
 3. The [Release workflow](.github/workflows/release.yml) builds the installers
    for every platform and attaches them to a draft release. Check it and publish it.
 
