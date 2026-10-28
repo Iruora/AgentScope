@@ -60,9 +60,10 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          # GitHub can drop a draft's tag and show it as untagged-..., so match the title too.
           find_id() {
             gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-              --jq ".[] | select(.tag_name == \"$TAG\") | .id" | head -n 1
+              --jq ".[] | select(.tag_name == \"$TAG\" or .name == \"AgentScope $TAG\") | .id" | sort -n | tail -n 1
           }
           id=$(find_id)
           if [ -z "$id" ]; then
@@ -70,8 +71,9 @@ jobs:
             id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" -f tag_name="$TAG" \
               -f name="AgentScope $TAG" -F draft=true -F body=@.github/release-notes.md --jq .id)
           else
-            # A rerun refreshes the notes of the existing draft.
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -F body=@.github/release-notes.md --silent
+            # A rerun refreshes the notes of the existing release and pins it to the tag again.
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$id" -f tag_name="$TAG" \
+              -F body=@.github/release-notes.md --silent
           fi
           if [ -z "$id" ]; then
             echo "::error::Could not find or create the draft release for $TAG"
@@ -196,5 +198,13 @@ jobs:
             fi
           done
           [ "$missing" = 0 ] || exit 1
-          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f make_latest=true --silent
+          # Naming the tag here keeps the release on it rather than an untagged-... one.
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f tag_name="$TAG" \
+            -F draft=false -f make_latest=true --silent
           echo "Published $TAG"
+          # Clean up leftovers of earlier attempts: other drafts of this release and stray untagged-... tags.
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.draft and .name == \"AgentScope $TAG\" and .id != $RELEASE_ID) | .id" |
+            while read -r old; do gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$old"; done
+          gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/untagged-" --jq '.[].ref' |
+            while read -r ref; do gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/$ref"; done
