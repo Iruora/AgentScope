@@ -1,7 +1,8 @@
 name: Release
 
 # Pushing a tag like v1.0.0 builds the installers for every platform and
-# attaches them to a draft GitHub release. Review the draft, then publish it.
+# attaches them to a draft GitHub release. Review the draft, then publish it,
+# or run it by hand with "publish" ticked to publish once every download is in.
 # Running it by hand from the Actions tab with a tag that does not exist yet
 # creates that tag on the commit it runs from (usually main) first.
 #
@@ -17,6 +18,10 @@ on:
       tag:
         description: Tag to build, e.g. v1.0.0 (created on the selected branch if missing)
         required: true
+      publish:
+        description: Publish the release once every installer and zip is attached
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -164,3 +169,27 @@ jobs:
             "https://uploads.github.com/repos/$env:GITHUB_REPOSITORY/releases/$env:RELEASE_ID/assets?name=$zip" `
             --input $zip --silent
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  publish:
+    name: Publish the release
+    needs: [create-release, build]
+    if: inputs.publish
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Check every download is attached, then publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release-id }}
+        run: |
+          names=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate --jq '.[].name')
+          echo "$names"
+          missing=0
+          for suffix in _aarch64.dmg _x64.dmg _aarch64.app.zip _x64.app.zip -setup.exe .msi _portable.zip .AppImage .deb .rpm; do
+            if ! grep -q -- "$suffix\$" <<< "$names"; then
+              echo "::error::No asset ending in $suffix"
+              missing=1
+            fi
+          done
+          [ "$missing" = 0 ] || exit 1
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f make_latest=true --silent
+          echo "Published $TAG"
