@@ -11,6 +11,7 @@ use tauri::{AppHandle, Manager, State};
 use crate::engine::Engine;
 use crate::focus::GoToAgent;
 use crate::settings::Settings;
+use crate::updater::UpdateInfo;
 use crate::{shim, Runtime};
 
 /// How many events the session timeline shows.
@@ -174,4 +175,31 @@ pub fn set_settings(
     }
     *runtime.settings.lock().unwrap_or_else(|e| e.into_inner()) = settings;
     Ok(())
+}
+
+/// The update found by the last check, without asking GitHub again.
+#[tauri::command]
+#[specta::specta]
+pub fn get_update(app: AppHandle) -> Option<UpdateInfo> {
+    crate::updater::pending(&app)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn check_for_update(app: AppHandle) -> Result<Option<UpdateInfo>, String> {
+    crate::updater::check(&app).await
+}
+
+/// Installs the pending update and restarts. Only returns on failure.
+#[tauri::command]
+#[specta::specta]
+pub async fn install_update(app: AppHandle) -> Result<(), String> {
+    crate::updater::install(&app).await
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn open_release_page() -> Result<(), String> {
+    tauri_plugin_opener::open_url(crate::updater::RELEASES_URL, None::<&str>)
+        .map_err(|e| e.to_string())
 }

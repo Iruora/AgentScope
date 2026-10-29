@@ -5,6 +5,7 @@ mod procs;
 mod settings;
 mod shim;
 mod tray;
+mod updater;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -71,8 +72,16 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::reveal_transcript,
             commands::get_settings,
             commands::set_settings,
+            commands::get_update,
+            commands::check_for_update,
+            commands::install_update,
+            commands::open_release_page,
         ])
-        .events(collect_events![GraphChanged, OpenSession])
+        .events(collect_events![
+            GraphChanged,
+            OpenSession,
+            updater::UpdateAvailable
+        ])
 }
 
 #[cfg(any(debug_assertions, test))]
@@ -104,6 +113,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
@@ -134,6 +144,13 @@ pub fn run() {
     });
 }
 
+/// Shims spool from now on instead of posting to a dead port.
+pub(crate) fn remove_ingest_info() {
+    if let Some(data_dir) = agentscope_protocol::data_dir() {
+        let _ = std::fs::remove_file(agentscope_protocol::ingest_info_path(&data_dir));
+    }
+}
+
 fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = agentscope_protocol::data_dir().ok_or("could not find a data directory")?;
     std::fs::create_dir_all(&data_dir)?;
@@ -143,6 +160,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         settings.retention_days,
     )?);
     app.manage(engine.clone());
+    app.manage(updater::PendingUpdate::default());
     app.manage(Runtime {
         settings: Mutex::new(settings),
         data_dir: data_dir.clone(),
@@ -164,6 +182,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     spawn_ingest(app.clone(), engine.clone(), data_dir);
     spawn_transcript_watcher(app.clone(), engine.clone());
     spawn_sweeper(app.clone(), engine);
+    updater::spawn_checker(app.clone());
     Ok(())
 }
 

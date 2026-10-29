@@ -16,6 +16,8 @@ pub struct Settings {
     pub retention_days: u32,
     /// The first-run welcome was finished or skipped.
     pub onboarded: bool,
+    /// Look for new versions on launch and every few hours.
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -25,6 +27,7 @@ impl Default for Settings {
             notify_input: false,
             retention_days: crate::engine::DEFAULT_RETENTION_DAYS,
             onboarded: false,
+            check_updates: true,
         }
     }
 }
@@ -68,6 +71,7 @@ mod tests {
             notify_input: false,
             retention_days: 30,
             onboarded: true,
+            check_updates: false,
         };
         save(dir.path(), &off).unwrap();
         assert_eq!(load(dir.path()), off);

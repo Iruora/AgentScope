@@ -1,10 +1,19 @@
-import { Bell, CircleAlert, FileCode2, History, Plug, TriangleAlert } from "lucide-react";
+import { Bell, CircleAlert, CircleCheck, FileCode2, History, Plug, RefreshCw, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 
 import { Button, Card, Code, IconTile, Notice, PageIntro, Pill, cx, type Tone } from "../components/ui";
-import { useIntegrations, useSaveSettings, useSetHooks, useSettings } from "../lib/api";
+import {
+  useAppInfo,
+  useCheckForUpdate,
+  useInstallUpdate,
+  useIntegrations,
+  useSaveSettings,
+  useSetHooks,
+  useSettings,
+  useUpdate,
+} from "../lib/api";
 import { harnessNames } from "../lib/format";
 import type { Diff, HarnessId, HookStatus, Integration, Settings as SettingsData } from "../lib/types";
 
@@ -29,6 +38,7 @@ export function Settings() {
       <IntegrationsSection />
       <NotificationsSection />
       <HistorySection />
+      <UpdatesSection />
     </div>
   );
 }
@@ -394,6 +404,73 @@ function HistorySection() {
         <div className="px-5 pb-4">
           <Notice tone="danger" icon={CircleAlert}>
             {String(save.error)}
+          </Notice>
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+function UpdatesSection() {
+  const settings = useSettings();
+  const save = useSaveSettings();
+  const appInfo = useAppInfo();
+  const update = useUpdate();
+  const check = useCheckForUpdate();
+  const install = useInstallUpdate();
+  if (!settings.data) return null;
+  const current: SettingsData = settings.data;
+  const found = update.data;
+  const error = check.error ?? install.error ?? save.error;
+
+  return (
+    <SettingsCard
+      icon={RefreshCw}
+      title="Updates"
+      description="AgentScope checks GitHub for a new release when it starts and every few hours. Updates are signed, and nothing installs until you choose to."
+    >
+      <ul className="divide-y divide-line-soft">
+        <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <span>
+            <span className="block text-[13px] font-semibold text-ink">Check for updates automatically</span>
+            <span className="mt-0.5 block text-[11px] text-muted">You get a notification when a new version is out.</span>
+          </span>
+          <Switch
+            checked={current.checkUpdates}
+            onChange={() => save.mutate({ ...current, checkUpdates: !current.checkUpdates })}
+            label="Check for updates automatically"
+          />
+        </li>
+        <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <span>
+            <span className="block text-[13px] font-semibold text-ink">
+              {found ? `Version ${found.version} is available` : `Version ${appInfo.data?.version ?? ""}`}
+            </span>
+            <span className="mt-0.5 flex items-center gap-1 text-[11px] text-muted">
+              {found && appInfo.data && `You have version ${appInfo.data.version}.`}
+              {!found && !check.isSuccess && "The version you are running."}
+              {!found && check.isSuccess && (
+                <>
+                  <CircleCheck size={12} className="text-work-text" aria-hidden /> It is up to date.
+                </>
+              )}
+            </span>
+          </span>
+          {found ? (
+            <Button size="sm" variant="primary" disabled={install.isPending} onClick={() => install.mutate(found)}>
+              {found.canInstall ? (install.isPending ? "Updating…" : "Update and restart") : "Download"}
+            </Button>
+          ) : (
+            <Button size="sm" disabled={check.isPending} onClick={() => check.mutate()}>
+              {check.isPending ? "Checking…" : "Check now"}
+            </Button>
+          )}
+        </li>
+      </ul>
+      {error && (
+        <div className="px-5 pb-4">
+          <Notice tone="danger" icon={CircleAlert}>
+            {error.message}
           </Notice>
         </div>
       )}

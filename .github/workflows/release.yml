@@ -9,6 +9,12 @@ name: Release
 # Builds are unsigned. To sign later, add the secrets Tauri reads (APPLE_*
 # for macOS, a Windows certificate or signCommand) and pass them in `env`
 # below; nothing else changes.
+#
+# Updates are signed with the updater key instead, which is free: the
+# TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD secrets
+# hold it, and the app checks downloads against the public key in
+# tauri.conf.json. The release gets a latest.json that installed apps read
+# from releases/latest to find the new version.
 
 on:
   push:
@@ -44,6 +50,14 @@ jobs:
         run: |
           if ! gh api "repos/$GITHUB_REPOSITORY/git/ref/tags/$TAG" --silent 2>/dev/null; then
             gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA"
+          fi
+      - name: Check the updater key is set
+        env:
+          KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "::error::Add the TAURI_SIGNING_PRIVATE_KEY and TAURI_SIGNING_PRIVATE_KEY_PASSWORD repository secrets first (see Releasing in the README)"
+            exit 1
           fi
       - uses: actions/checkout@v4
         with:
@@ -133,10 +147,15 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: apps/desktop
-          args: --target ${{ matrix.target }}
+          # Signed update files (.sig, and .app.tar.gz on macOS) are only made for releases.
+          args: --target ${{ matrix.target }} --config src-tauri/tauri.updater.conf.json
           releaseId: ${{ needs.create-release.outputs.release-id }}
+          # The updater-manifest job writes latest.json once every build is in.
+          uploadUpdaterJson: false
       - name: Zip the macOS app
         if: runner.os == 'macOS'
         env:
@@ -166,6 +185,8 @@ jobs:
           # The app looks for agentscope-hook.exe next to itself.
           Copy-Item "$out/agentscope-desktop.exe" "$dir/AgentScope.exe"
           Copy-Item "$out/agentscope-hook.exe" "$dir/agentscope-hook.exe"
+          # Tells the app it cannot update itself, so it links to the download instead.
+          Set-Content "$dir/portable.txt" "Portable AgentScope. Download new versions from https://github.com/Iruora/AgentScope/releases/latest"
           $zip = "AgentScope_${version}_${{ matrix.arch }}_portable.zip"
           Compress-Archive -Path $dir -DestinationPath $zip -Force
           # A rerun replaces the zip from the previous attempt.
@@ -177,13 +198,12 @@ jobs:
             --input $zip --silent
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-  publish:
-    name: Publish the release
+  updater-manifest:
+    name: Check the downloads and write latest.json
     needs: [create-release, build]
-    if: inputs.publish
     runs-on: ubuntu-22.04
     steps:
-      - name: Check every download is attached, then publish
+      - name: Check every download is attached
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_ID: ${{ needs.create-release.outputs.release-id }}
@@ -191,13 +211,64 @@ jobs:
           names=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate --jq '.[].name')
           echo "$names"
           missing=0
-          for suffix in _aarch64.dmg _x64.dmg _aarch64.app.zip _x64.app.zip -setup.exe .msi _portable.zip .AppImage .deb .rpm; do
+          for suffix in _aarch64.dmg _x64.dmg _aarch64.app.zip _x64.app.zip -setup.exe .msi _portable.zip .AppImage .deb .rpm \
+            _aarch64.app.tar.gz _x64.app.tar.gz _aarch64.app.tar.gz.sig _x64.app.tar.gz.sig \
+            -setup.exe.sig .msi.sig .AppImage.sig .deb.sig .rpm.sig; do
             if ! grep -q -- "$suffix\$" <<< "$names"; then
               echo "::error::No asset ending in $suffix"
               missing=1
             fi
           done
           [ "$missing" = 0 ] || exit 1
+      - name: Write latest.json for the in-app updater
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release-id }}
+        run: |
+          assets=$(gh api "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets" --paginate --jq '.[] | "\(.id) \(.name)"')
+          platforms='{}'
+          # add <file suffix> <updater targets...>: the app looks for {os}-{arch}-{installer}, then {os}-{arch}.
+          add() {
+            local suffix=$1 id name sig_id signature
+            shift
+            read -r id name <<< "$(grep -- "$suffix\$" <<< "$assets" | head -n 1)"
+            sig_id=$(awk -v n="$name.sig" '$2 == n { print $1 }' <<< "$assets")
+            signature=$(gh api -H "Accept: application/octet-stream" "repos/$GITHUB_REPOSITORY/releases/assets/$sig_id")
+            for target in "$@"; do
+              platforms=$(jq --arg t "$target" --arg sig "$signature" \
+                --arg url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$name" \
+                '.[$t] = {signature: $sig, url: $url}' <<< "$platforms")
+            done
+          }
+          add _aarch64.app.tar.gz darwin-aarch64 darwin-aarch64-app
+          add _x64.app.tar.gz darwin-x86_64 darwin-x86_64-app
+          add -setup.exe windows-x86_64 windows-x86_64-nsis
+          add .msi windows-x86_64-msi
+          add .AppImage linux-x86_64 linux-x86_64-appimage
+          add .deb linux-x86_64-deb
+          add .rpm linux-x86_64-rpm
+          jq -n --arg version "${TAG#v}" --arg date "$(date -u +%Y-%m-%dT%H:%M:%SZ)" --argjson platforms "$platforms" \
+            --arg notes "See what changed at https://github.com/$GITHUB_REPOSITORY/releases/tag/$TAG" \
+            '{version: $version, notes: $notes, pub_date: $date, platforms: $platforms}' > latest.json
+          cat latest.json
+          # A rerun replaces the manifest from the previous attempt.
+          old=$(awk '$2 == "latest.json" { print $1 }' <<< "$assets")
+          if [ -n "$old" ]; then gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/assets/$old"; fi
+          gh api --method POST -H "Content-Type: application/json" \
+            "https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?name=latest.json" \
+            --input latest.json --silent
+
+  publish:
+    name: Publish the release
+    needs: [create-release, updater-manifest]
+    if: inputs.publish
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_ID: ${{ needs.create-release.outputs.release-id }}
+        run: |
           # Naming the tag here keeps the release on it rather than an untagged-... one.
           gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -f tag_name="$TAG" \
             -F draft=false -f make_latest=true --silent
