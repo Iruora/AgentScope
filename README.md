@@ -7,7 +7,7 @@ AgentScope is a free, open source desktop app for macOS, Windows and Linux. It s
 ![The Approvals view, with Codex, Copilot CLI and Cursor agents waiting](docs/images/approvals.png)
 
 - **Observe only.** AgentScope never answers prompts or changes what an agent does. Its hooks run in the background and fail open, so even a broken install cannot block an agent.
-- **Local only.** Everything is read and stored on your machine. The app makes no network calls.
+- **Local only.** Everything is read and stored on your machine. The only network call is the update check against GitHub Releases, which you can turn off in Settings.
 - **Reversible.** Connecting a harness shows the exact config diff first, backs up the original, and Disconnect removes only what was added.
 
 ## Install
@@ -26,6 +26,8 @@ The builds are not code signed yet, so macOS and Windows ask you to confirm once
 - **macOS:** open the `.dmg` and drag AgentScope to Applications, then open it. When macOS says it cannot verify the app, click **Done**, open **System Settings → Privacy & Security**, scroll down and click **Open Anyway** next to AgentScope, then confirm. From the terminal, `xattr -dr com.apple.quarantine /Applications/AgentScope.app` does the same.
 - **Windows:** when SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway**.
 - **Linux:** for the AppImage, run `chmod +x AgentScope_*.AppImage` and start it. For the `.deb`, run `sudo apt install ./AgentScope_*.deb`.
+
+From version 1.1.0, AgentScope updates itself: when a new release is out it shows **Update and restart** in the sidebar and in Settings. Updates are signed, and the app checks the signature before installing. The portable Windows zip does not update in place; it links to the download page instead.
 
 ## Getting started
 
@@ -104,7 +106,16 @@ echo '{"session_id":"demo"}' | target/release/agentscope-hook --harness claude-c
    with the tag name instead; it creates the tag for you. Tick **publish** to
    have it publish the release once every download is attached.
 3. The [Release workflow](.github/workflows/release.yml) builds the installers
-   for every platform and attaches them to a draft release. Check it and publish it.
+   for every platform, attaches them to a draft release with a `latest.json` for
+   the in-app updater, and (with **publish**) publishes it. Installed apps pick
+   up the new version once the release is published.
+
+The updater files are signed with a key kept in two repository secrets,
+`TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The
+matching public key is `plugins.updater.pubkey` in `tauri.conf.json`. Keep the
+private key safe: without it, installed apps cannot be updated anymore. To make
+a new pair, run `pnpm tauri signer generate`, replace the public key, and
+update both secrets; apps with the old key then need one manual install.
 
 ## License
 

@@ -20,12 +20,19 @@ export const commands = {
 	revealTranscript: (sessionId: string) => typedError<null, string>(__TAURI_INVOKE("reveal_transcript", { sessionId })),
 	getSettings: () => __TAURI_INVOKE<Settings_Serialize>("get_settings"),
 	setSettings: (settings: Settings_Deserialize) => typedError<null, string>(__TAURI_INVOKE("set_settings", { settings })),
+	/**  The update found by the last check, without asking GitHub again. */
+	getUpdate: () => __TAURI_INVOKE<UpdateInfo_Serialize | null>("get_update"),
+	checkForUpdate: () => typedError<UpdateInfo_Serialize | null, string>(__TAURI_INVOKE("check_for_update")),
+	/**  Installs the pending update and restarts. Only returns on failure. */
+	installUpdate: () => typedError<null, string>(__TAURI_INVOKE("install_update")),
+	openReleasePage: () => typedError<null, string>(__TAURI_INVOKE("open_release_page")),
 };
 
 /** Events */
 export const events = {
 	graphChanged: makeEvent<GraphChanged, GraphChanged>("graph-changed"),
 	openSession: makeEvent<OpenSession, OpenSession>("open-session"),
+	updateAvailable: makeEvent<UpdateAvailable, UpdateAvailable>("update-available"),
 };
 
 /* Types */
@@ -405,6 +412,8 @@ export type Settings_Deserialize = {
 	retentionDays?: number,
 	/**  The first-run welcome was finished or skipped. */
 	onboarded?: boolean,
+	/**  Look for new versions on launch and every few hours. */
+	checkUpdates?: boolean,
 };
 
 export type Settings_Serialize = {
@@ -416,6 +425,8 @@ export type Settings_Serialize = {
 	retentionDays: number,
 	/**  The first-run welcome was finished or skipped. */
 	onboarded: boolean,
+	/**  Look for new versions on launch and every few hours. */
+	checkUpdates: boolean,
 };
 
 /**  What the UI renders. */
@@ -476,6 +487,33 @@ export type Tokens_Serialize = {
 	input: number | null,
 	output: number | null,
 	cached: number | null,
+};
+
+/**  Emitted when a background check finds a new version. */
+export type UpdateAvailable = {
+	version: string,
+};
+
+export type UpdateInfo = UpdateInfo_Serialize | UpdateInfo_Deserialize;
+
+export type UpdateInfo_Deserialize = {
+	version: string,
+	notes?: string | null,
+	/**
+	 *  `false` for copies the updater cannot replace, such as the portable
+	 *  Windows zip; those link to the release page instead.
+	 */
+	canInstall: boolean,
+};
+
+export type UpdateInfo_Serialize = {
+	version: string,
+	notes: string | null,
+	/**
+	 *  `false` for copies the updater cannot replace, such as the portable
+	 *  Windows zip; those link to the release page instead.
+	 */
+	canInstall: boolean,
 };
 
 /* Tauri Specta runtime */

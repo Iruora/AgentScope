@@ -1,10 +1,10 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { Bell, History, Inbox, LayoutGrid, Moon, Radar, RefreshCw, Settings as SettingsIcon, Sun } from "lucide-react";
+import { ArrowDownToLine, Bell, History, Inbox, LayoutGrid, Moon, Radar, RefreshCw, Settings as SettingsIcon, Sun } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { useCallback, useState } from "react";
 
-import { Dot, IconButton, cx } from "./components/ui";
-import { useGraphUpdates, useOpenSessionRequests, useSettings, useSnapshot } from "./lib/api";
+import { Button, Dot, IconButton, cx } from "./components/ui";
+import { useGraphUpdates, useInstallUpdate, useOpenSessionRequests, useSettings, useSnapshot, useUpdate } from "./lib/api";
 import { countByFilter, filterLabels, filterTones, liveSessions, type SessionFilter } from "./lib/filters";
 import { useTheme } from "./lib/theme";
 import { useNow } from "./lib/useNow";
@@ -177,10 +177,36 @@ function Sidebar({ route, go }: { route: Route; go: (section: Section, filter?: 
         />
         <NavItem icon={History} label="History" active={at("History")} onClick={() => go("History")} />
       </div>
-      <div className="mt-auto">
+      <div className="mt-auto flex flex-col gap-3">
+        <UpdateBanner />
         <NavItem icon={SettingsIcon} label="Settings" active={at("Settings")} onClick={() => go("Settings")} />
       </div>
     </nav>
+  );
+}
+
+function UpdateBanner() {
+  const update = useUpdate();
+  const install = useInstallUpdate();
+  if (!update.data) return null;
+  const { version, canInstall } = update.data;
+  return (
+    <div className="rounded-[10px] bg-accent-soft px-3 py-2.5">
+      <p className="flex items-center gap-1.5 text-[12px] font-semibold text-accent-text">
+        <ArrowDownToLine size={14} aria-hidden />
+        Version {version} is available
+      </p>
+      <Button
+        size="sm"
+        variant="primary"
+        className="mt-2 w-full"
+        disabled={install.isPending}
+        onClick={() => install.mutate(update.data!)}
+      >
+        {canInstall ? (install.isPending ? "Updating…" : "Update and restart") : "Download"}
+      </Button>
+      {install.isError && <p className="mt-1.5 text-[11px] text-danger-text">{install.error.message}</p>}
+    </div>
   );
 }
 

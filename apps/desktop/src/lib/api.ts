@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { commands, events } from "../bindings";
-import type { HarnessId, Settings } from "./types";
+import type { HarnessId, Settings, UpdateInfo } from "./types";
 
 const snapshotKey = ["snapshot"] as const;
 
@@ -95,4 +95,37 @@ export function useOpenSessionRequests(open: (sessionId: string) => void) {
       void unlisten.then((stop) => stop());
     };
   }, [open]);
+}
+
+const updateKey = ["update"] as const;
+
+/** The newer version found by the last check, if any. Background checks refresh it. */
+export function useUpdate() {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    const unlisten = events.updateAvailable.listen(() => {
+      void queryClient.invalidateQueries({ queryKey: updateKey });
+    });
+    return () => {
+      void unlisten.then((stop) => stop());
+    };
+  }, [queryClient]);
+  return useQuery({ queryKey: updateKey, queryFn: () => commands.getUpdate() });
+}
+
+/** Asks GitHub for a newer version now. */
+export function useCheckForUpdate() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: () => unwrap(commands.checkForUpdate()),
+    onSuccess: (update: UpdateInfo | null) => queryClient.setQueryData(updateKey, update),
+  });
+}
+
+/** Installs the found update and restarts, or opens the download page for copies that cannot update themselves. */
+export function useInstallUpdate() {
+  return useMutation({
+    mutationFn: (update: UpdateInfo) =>
+      unwrap(update.canInstall ? commands.installUpdate() : commands.openReleasePage()),
+  });
 }
