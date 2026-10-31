@@ -1,5 +1,12 @@
 See every local AI coding agent, its subagents, and which ones are waiting for your approval. Works with Claude Code, Codex, Copilot CLI and Cursor.
 
+**What's new in 1.2**
+
+- **Updates in place.** AgentScope now updates itself from GitHub Releases. Coming from 1.0, install this version once by hand; later ones arrive inside the app.
+- **Command palette.** Press Ctrl+K (⌘K on a Mac) to jump to any session, view or action. Ctrl/⌘+Enter goes straight to the agent.
+- **Global shortcut.** Settings → Shortcuts can set a key that focuses the agent that has waited longest, from any app.
+- **Diagnostics.** Settings → Diagnostics shows what each harness is sending, and copies a redacted debug report for bug reports.
+
 **Downloads**
 
 - macOS: the `.dmg`, or the `.app.zip` (`aarch64` for Apple silicon, `x64` for Intel Macs)
