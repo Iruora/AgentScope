@@ -17,3 +17,15 @@ a harness update that changes a payload shape shows up as a failing test.
 
 Fixtures are written by hand from the harnesses' documented payload shapes
 (and, for Codex, its JSON schemas) and contain no real user data.
+
+## Keeping up with harness releases
+
+The [Harness drift](../.github/workflows/drift.yml) workflow runs every Monday
+(or by hand from the Actions tab). It compares the latest Claude Code, Codex
+and Copilot CLI releases on npm with the release line in
+[`scripts/drift/harnesses.json`](../scripts/drift/harnesses.json), and checks
+that every hook event an adapter installs still appears in the harness's
+binary. On drift it opens or updates one `harness-drift` issue per harness.
+After checking the changelog and updating the adapter and fixtures, bump
+`tested` there and the next run closes the issue. Run it locally with
+`node scripts/drift/drift.mjs`.
