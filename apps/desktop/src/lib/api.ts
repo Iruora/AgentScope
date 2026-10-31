@@ -24,6 +24,8 @@ export function useGraphUpdates() {
       void queryClient.invalidateQueries({ queryKey: snapshotKey });
       void queryClient.invalidateQueries({ queryKey: ["sessionEvents"] });
       void queryClient.invalidateQueries({ queryKey: answerableKey });
+      void queryClient.invalidateQueries({ queryKey: ["usage"] });
+      void queryClient.invalidateQueries({ queryKey: ["costs"] });
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -189,4 +191,14 @@ export function closePopup() {
 /** Sends a test push with settings that are not saved yet. */
 export function useTestPush() {
   return useMutation({ mutationFn: (push: PushSettings) => unwrap(commands.testPush(push)) });
+}
+
+/** Token usage and estimated cost for the last `days` days. */
+export function useUsage(days: number) {
+  return useQuery({ queryKey: ["usage", days], queryFn: () => unwrap(commands.getUsage(days)) });
+}
+
+/** Estimated cost per session id, for sessions with a priced model. */
+export function useCosts() {
+  return useQuery({ queryKey: ["costs"], queryFn: () => commands.getCosts() });
 }

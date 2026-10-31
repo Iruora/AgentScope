@@ -2,8 +2,8 @@ import { ChevronRight, CircleAlert, Clock, Coins, FolderGit2, History as History
 import { useMemo, useState } from "react";
 
 import { Card, Code, EmptyState, Label, Notice, PageIntro, cx } from "../components/ui";
-import { useSettings, useSnapshot } from "../lib/api";
-import { basename, compactNumber, elapsed, harnessNames } from "../lib/format";
+import { useCosts, useSettings, useSnapshot } from "../lib/api";
+import { basename, compactNumber, elapsed, harnessNames, usd } from "../lib/format";
 import type { HarnessId, Session } from "../lib/types";
 
 function matchesSearch(session: Session, query: string): boolean {
@@ -152,6 +152,7 @@ function HistoryRow({
 }) {
   const folder = session.repo?.root ?? session.cwd;
   const tokens = (session.tokens?.input ?? 0) + (session.tokens?.output ?? 0);
+  const cost = useCosts().data?.[session.id];
   return (
     <li>
       <button
@@ -186,6 +187,9 @@ function HistoryRow({
               <Coins size={12} aria-hidden />
               {compactNumber(tokens)}
             </span>
+          )}
+          {cost != null && (
+            <span title="Estimated cost at API list prices">~{usd(cost)}</span>
           )}
           <span className="inline-flex items-center gap-1" title="Duration">
             <Clock size={12} aria-hidden />

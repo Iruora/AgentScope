@@ -363,3 +363,29 @@ pub async fn test_push(push: crate::push::PushSettings) -> Result<(), String> {
     };
     crate::push::send(&push, &msg).await
 }
+
+/// Token usage and estimated cost over the last `days` days (7, 30 or 90).
+#[tauri::command]
+#[specta::specta]
+pub fn get_usage(
+    engine: State<'_, Arc<Engine>>,
+    runtime: State<'_, Runtime>,
+    days: u32,
+) -> Result<crate::usage::UsageReport, String> {
+    let days = days.clamp(1, agentscope_core::store::USAGE_DAYS as u32);
+    let keys = crate::usage::day_keys(days);
+    let rows = engine.usage_since(&keys[0]).map_err(|e| e.to_string())?;
+    let prices = crate::usage::Prices::load(&runtime.data_dir);
+    Ok(crate::usage::report(&rows, keys, &prices))
+}
+
+/// Estimated cost of each session that has a priced model.
+#[tauri::command]
+#[specta::specta]
+pub fn get_costs(
+    engine: State<'_, Arc<Engine>>,
+    runtime: State<'_, Runtime>,
+) -> std::collections::HashMap<String, f64> {
+    let prices = crate::usage::Prices::load(&runtime.data_dir);
+    crate::usage::session_costs(&engine.snapshot().sessions, &prices)
+}

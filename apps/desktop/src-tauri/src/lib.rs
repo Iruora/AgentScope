@@ -13,6 +13,7 @@ mod settings;
 mod shim;
 mod tray;
 mod updater;
+mod usage;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -92,6 +93,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::show_session,
             commands::close_popup,
             commands::test_push,
+            commands::get_usage,
+            commands::get_costs,
         ])
         .events(collect_events![
             GraphChanged,

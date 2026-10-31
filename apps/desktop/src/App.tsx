@@ -1,6 +1,7 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownToLine,
+  BarChart3,
   Bell,
   ClipboardCopy,
   History,
@@ -39,8 +40,9 @@ import { Onboarding } from "./views/Onboarding";
 import { Overview } from "./views/Overview";
 import { SessionDetail } from "./views/SessionDetail";
 import { Settings } from "./views/Settings";
+import { Usage } from "./views/Usage";
 
-type Section = "Overview" | "Approvals" | "History" | "Settings";
+type Section = "Overview" | "Approvals" | "History" | "Usage" | "Settings";
 
 type Route = { section: Section; sessionId?: string; filter: SessionFilter };
 
@@ -79,6 +81,8 @@ export function App() {
     view = <Approvals onOpen={openSession} />;
   } else if (route.section === "History") {
     view = <HistoryView onOpen={openSession} />;
+  } else if (route.section === "Usage") {
+    view = <Usage />;
   } else if (route.section === "Settings") {
     view = <Settings />;
   } else {
@@ -144,6 +148,7 @@ function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void,
     })),
     { id: "view:approvals", group: "Go to", label: "Approvals", icon: Inbox, run: () => go("Approvals") },
     { id: "view:history", group: "Go to", label: "History", keywords: "ended past search", icon: History, run: () => go("History") },
+    { id: "view:usage", group: "Go to", label: "Usage", keywords: "cost tokens spend money price", icon: BarChart3, run: () => go("Usage") },
     { id: "view:settings", group: "Go to", label: "Settings", keywords: "integrations connect hooks notifications", icon: SettingsIcon, run: () => go("Settings") },
   ];
 
@@ -292,6 +297,7 @@ function Sidebar({ route, go }: { route: Route; go: (section: Section, filter?: 
           onClick={() => go("Approvals")}
         />
         <NavItem icon={History} label="History" active={at("History")} onClick={() => go("History")} />
+        <NavItem icon={BarChart3} label="Usage" active={at("Usage")} onClick={() => go("Usage")} />
       </div>
       <div className="mt-auto flex flex-col gap-3">
         <UpdateBanner />

@@ -4,8 +4,8 @@ import { useMemo, useState } from "react";
 import { GoToAgentButton } from "../components/GoToAgentButton";
 import { StatePill, stateTones } from "../components/StatePill";
 import { Button, Card, Code, Dot, Label, Notice, cx, toneSolid, type Tone } from "../components/ui";
-import { revealTranscript, useSessionEvents, useSnapshot } from "../lib/api";
-import { basename, clockTime, compactNumber, elapsed, harnessNames } from "../lib/format";
+import { revealTranscript, useCosts, useSessionEvents, useSnapshot } from "../lib/api";
+import { basename, clockTime, compactNumber, elapsed, harnessNames, usd } from "../lib/format";
 import type { Agent, AgentEvent, Session } from "../lib/types";
 
 export function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () => void }) {
@@ -75,6 +75,7 @@ function BackButton({ onBack }: { onBack: () => void }) {
 }
 
 function Header({ session }: { session: Session }) {
+  const costs = useCosts();
   const [revealError, setRevealError] = useState<string | null>(null);
   const facts: [string, React.ReactNode, string?][] = [
     ["Model", session.model ?? "Unknown"],
@@ -87,6 +88,8 @@ function Header({ session }: { session: Session }) {
     const cached = t.cached ? ` · ${compactNumber(t.cached)} cached` : "";
     facts.push(["Tokens", `${compactNumber(t.input ?? 0)} in · ${compactNumber(t.output ?? 0)} out${cached}`]);
   }
+  const cost = costs.data?.[session.id];
+  if (cost != null) facts.push(["Est. cost", `~${usd(cost)}`, "At API list prices; subscription plans are not billed per token"]);
   const folder = session.repo?.root ?? session.cwd;
 
   return (

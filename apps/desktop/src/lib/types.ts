@@ -22,4 +22,6 @@ export type {
   Snapshot_Serialize as Snapshot,
   Tokens_Serialize as Tokens,
   UpdateInfo_Serialize as UpdateInfo,
+  UsageReport_Serialize as UsageReport,
+  UsageTotal,
 } from "../bindings";

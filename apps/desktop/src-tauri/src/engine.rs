@@ -170,6 +170,13 @@ impl Engine {
         self.lock().graph.session(id).cloned()
     }
 
+    pub fn usage_since(
+        &self,
+        day: &str,
+    ) -> Result<Vec<agentscope_core::store::UsageRow>, StoreError> {
+        self.lock().store.usage_since(day)
+    }
+
     pub fn session_events(&self, id: &str, limit: u32) -> Result<Vec<AgentEvent>, StoreError> {
         self.lock().store.session_events(id, limit)
     }

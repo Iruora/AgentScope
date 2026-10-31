@@ -44,6 +44,10 @@ export const commands = {
 	closePopup: () => __TAURI_INVOKE<void>("close_popup"),
 	/**  Sends a test message with the given push settings, before saving them. */
 	testPush: (push: PushSettings_Deserialize) => typedError<null, string>(__TAURI_INVOKE("test_push", { push })),
+	/**  Token usage and estimated cost over the last `days` days (7, 30 or 90). */
+	getUsage: (days: number) => typedError<UsageReport_Serialize, string>(__TAURI_INVOKE("get_usage", { days })),
+	/**  Estimated cost of each session that has a priced model. */
+	getCosts: () => __TAURI_INVOKE<{ [key in string]: number | null }>("get_costs"),
 };
 
 /** Events */
@@ -662,6 +666,45 @@ export type UpdateInfo_Serialize = {
 	 *  Windows zip; those link to the release page instead.
 	 */
 	canInstall: boolean,
+};
+
+export type UsageReport = UsageReport_Serialize | UsageReport_Deserialize;
+
+export type UsageReport_Deserialize = {
+	days: number,
+	total: UsageTotal,
+	/**  One entry per day in the range, oldest first, including empty days. */
+	byDay: UsageTotal[],
+	byHarness: UsageTotal[],
+	byRepo: UsageTotal[],
+	byModel: UsageTotal[],
+	unpricedModels: string[],
+	pricesChecked: string,
+	pricesError?: string | null,
+};
+
+export type UsageReport_Serialize = {
+	days: number,
+	total: UsageTotal,
+	/**  One entry per day in the range, oldest first, including empty days. */
+	byDay: UsageTotal[],
+	byHarness: UsageTotal[],
+	byRepo: UsageTotal[],
+	byModel: UsageTotal[],
+	unpricedModels: string[],
+	pricesChecked: string,
+	pricesError: string | null,
+};
+
+export type UsageTotal = {
+	key: string,
+	input: number | null,
+	output: number | null,
+	cached: number | null,
+	/**  Estimated USD for the priced part. */
+	cost: number | null,
+	/**  Tokens of models without a price, left out of `cost`. */
+	unpricedTokens: number | null,
 };
 
 /* Tauri Specta runtime */
