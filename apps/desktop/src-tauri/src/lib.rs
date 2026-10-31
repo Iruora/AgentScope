@@ -16,6 +16,7 @@ mod shim;
 mod tray;
 mod updater;
 mod usage;
+mod widget;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -103,6 +104,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_labels,
             commands::set_label,
             commands::export_session,
+            commands::set_widget,
         ])
         .events(collect_events![
             GraphChanged,
@@ -199,6 +201,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&data_dir)?;
     let settings = settings::load(&data_dir);
     let shortcut = settings.global_shortcut.clone();
+    let show_widget = settings.widget;
     let engine = Arc::new(Engine::open(
         &data_dir.join("agentscope.db"),
         settings.retention_days,
@@ -218,6 +221,9 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     tray::create(app)?;
     if let Err(err) = hotkey::apply(app, &shortcut) {
         tracing::warn!(%err, "global shortcut not registered");
+    }
+    if show_widget {
+        widget::set(app, true);
     }
     publish(app, &engine, Outcome::changed());
 
@@ -445,7 +451,12 @@ fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
     let runtime = app.state::<Runtime>();
     let settings = runtime.settings();
     popup::sync(app, &answerable, settings.popup_approvals);
-    let key = tray::menu_key(&snapshot, &answerable, settings.confirm_risky);
+    let key = tray::menu_key(
+        &snapshot,
+        &answerable,
+        settings.confirm_risky,
+        settings.widget,
+    );
     let menu_changed = {
         let mut last = runtime.tray_menu.lock().unwrap_or_else(|e| e.into_inner());
         let changed = *last != key;

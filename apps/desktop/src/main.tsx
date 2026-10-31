@@ -7,6 +7,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./App";
 import { applyInitialTheme } from "./lib/theme";
 import { Popup } from "./views/Popup";
+import { Widget } from "./views/Widget";
 import "./styles.css";
 
 const queryClient = new QueryClient({
@@ -15,13 +16,13 @@ const queryClient = new QueryClient({
 
 applyInitialTheme();
 
-/** The same bundle serves the main window and the approval popup. */
-const isPopup = getCurrentWindow().label === "popup";
+/** The same bundle serves the main window, the approval popup and the mini widget. */
+const label = getCurrentWindow().label;
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
-      {isPopup ? <Popup /> : <App />}
+      {label === "popup" ? <Popup /> : label === "widget" ? <Widget /> : <App />}
     </QueryClientProvider>
   </StrictMode>,
 );

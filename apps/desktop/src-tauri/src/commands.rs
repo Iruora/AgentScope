@@ -187,6 +187,7 @@ pub fn set_settings(
         ));
     }
     settings.push.validate()?;
+    let widget_changed = settings.widget != runtime.settings().widget;
     if settings.global_shortcut != runtime.settings().global_shortcut {
         crate::hotkey::apply(&app, &settings.global_shortcut)?;
     }
@@ -196,7 +197,12 @@ pub fn set_settings(
             .set_retention(settings.retention_days)
             .map_err(|e| e.to_string())?;
     }
+    let widget = settings.widget;
     *runtime.settings.lock().unwrap_or_else(|e| e.into_inner()) = settings;
+    if widget_changed {
+        crate::widget::set(&app, widget);
+        crate::publish_changed(&app);
+    }
     Ok(())
 }
 
@@ -502,4 +508,22 @@ pub async fn export_session(
     let path = path.into_path().map_err(|e| e.to_string())?;
     std::fs::write(&path, body).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
     Ok(Some(path.display().to_string()))
+}
+
+/// Shows or hides the mini widget and remembers it for the next launch.
+#[tauri::command]
+#[specta::specta]
+pub fn set_widget(app: AppHandle, visible: bool) -> Result<(), String> {
+    toggle_widget(&app, visible)
+}
+
+pub fn toggle_widget(app: &AppHandle, visible: bool) -> Result<(), String> {
+    let runtime = app.state::<Runtime>();
+    let mut settings = runtime.settings();
+    settings.widget = visible;
+    crate::settings::save(&runtime.data_dir, &settings).map_err(|e| e.to_string())?;
+    *runtime.settings.lock().unwrap_or_else(|e| e.into_inner()) = settings;
+    crate::widget::set(app, visible);
+    crate::publish_changed(app);
+    Ok(())
 }

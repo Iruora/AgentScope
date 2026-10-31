@@ -62,6 +62,8 @@ export const commands = {
 	 *  Returns the saved path, or `None` when the user cancels.
 	 */
 	exportSession: (sessionId: string, format: ExportFormat) => typedError<string | null, string>(__TAURI_INVOKE("export_session", { sessionId, format })),
+	/**  Shows or hides the mini widget and remembers it for the next launch. */
+	setWidget: (visible: boolean) => typedError<null, string>(__TAURI_INVOKE("set_widget", { visible })),
 };
 
 /** Events */
@@ -677,6 +679,8 @@ export type Settings_Deserialize = {
 	popupApprovals?: boolean,
 	/**  Notify about stuck tools, failure loops, quiet sessions and conflicts. */
 	notifyConcerns?: boolean,
+	/**  Show the mini widget; it reopens on launch while this is on. */
+	widget?: boolean,
 	/**  Phone push, off by default. */
 	push?: PushSettings_Deserialize,
 };
@@ -708,6 +712,8 @@ export type Settings_Serialize = {
 	popupApprovals: boolean,
 	/**  Notify about stuck tools, failure loops, quiet sessions and conflicts. */
 	notifyConcerns: boolean,
+	/**  Show the mini widget; it reopens on launch while this is on. */
+	widget: boolean,
 	/**  Phone push, off by default. */
 	push: PushSettings_Serialize,
 };

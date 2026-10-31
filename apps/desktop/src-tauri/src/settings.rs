@@ -30,6 +30,8 @@ pub struct Settings {
     pub popup_approvals: bool,
     /// Notify about stuck tools, failure loops, quiet sessions and conflicts.
     pub notify_concerns: bool,
+    /// Show the mini widget; it reopens on launch while this is on.
+    pub widget: bool,
     /// Phone push, off by default.
     pub push: crate::push::PushSettings,
 }
@@ -63,6 +65,7 @@ impl Default for Settings {
             confirm_risky: true,
             popup_approvals: true,
             notify_concerns: false,
+            widget: false,
             push: crate::push::PushSettings::default(),
         }
     }
@@ -113,6 +116,7 @@ mod tests {
             confirm_risky: false,
             popup_approvals: false,
             notify_concerns: true,
+            widget: true,
             push: crate::push::PushSettings {
                 service: crate::push::PushService::Ntfy,
                 target: "my-topic".into(),

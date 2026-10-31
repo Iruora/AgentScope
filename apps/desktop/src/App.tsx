@@ -8,6 +8,7 @@ import {
   Inbox,
   LayoutGrid,
   Moon,
+  PanelTopOpen,
   Radar,
   RefreshCw,
   Search,
@@ -26,6 +27,8 @@ import {
   useGraphUpdates,
   useInstallUpdate,
   useOpenSessionRequests,
+  setWidget,
+  useLabels,
   useSettings,
   useSnapshot,
   useUpdate,
@@ -123,6 +126,8 @@ function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void,
   const copyReport = useCopyDebugReport();
   const queryClient = useQueryClient();
   const [theme, toggleTheme] = useTheme();
+  const widgetOn = useSettings().data?.widget ?? false;
+  const labels = useLabels().data;
 
   const live = liveSessions(snapshot.data?.sessions);
   const ordered = [...live.filter((s) => needsUser(s.state)), ...live.filter((s) => !needsUser(s.state))];
@@ -131,8 +136,8 @@ function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void,
     return {
       id: `session:${s.id}`,
       group: needsUser(s.state) ? "Needs you" : "Live sessions",
-      label: s.title ?? repo,
-      keywords: `${repo} ${s.repo?.branch ?? ""} ${s.cwd} ${s.model ?? ""}`,
+      label: labels?.get(s.id)?.name ?? s.title ?? repo,
+      keywords: `${repo} ${s.repo?.branch ?? ""} ${s.cwd} ${s.model ?? ""} ${labels?.get(s.id)?.tags.join(" ") ?? ""}`,
       detail: `${harnessNames[s.harness]} · ${repo}${s.repo?.branch ? ` · ${s.repo.branch}` : ""} · ${stateLabels[s.state]}`,
       tone: filterTones[filterOf(s.state)],
       run: () => openSession(s.id),
@@ -167,6 +172,14 @@ function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void,
       keywords: "theme dark light appearance",
       icon: theme === "dark" ? Sun : Moon,
       run: toggleTheme,
+    },
+    {
+      id: "action:widget",
+      group: "Actions",
+      label: widgetOn ? "Hide mini widget" : "Show mini widget",
+      keywords: "widget always on top floating overlay",
+      icon: PanelTopOpen,
+      run: () => void setWidget(!widgetOn),
     },
     { id: "action:refresh", group: "Actions", label: "Refresh", icon: RefreshCw, run: () => void queryClient.invalidateQueries() },
     {

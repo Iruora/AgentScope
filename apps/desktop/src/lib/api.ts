@@ -26,6 +26,8 @@ export function useGraphUpdates() {
       void queryClient.invalidateQueries({ queryKey: answerableKey });
       void queryClient.invalidateQueries({ queryKey: ["usage"] });
       void queryClient.invalidateQueries({ queryKey: ["costs"] });
+      // The tray and the widget can change settings, e.g. hide the widget.
+      void queryClient.invalidateQueries({ queryKey: ["settings"] });
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -189,6 +191,10 @@ export function showSession(sessionId: string) {
 }
 
 /** Closes the approval popup until a new prompt arrives. */
+export function setWidget(visible: boolean) {
+  return unwrap(commands.setWidget(visible));
+}
+
 export function closePopup() {
   return commands.closePopup();
 }
