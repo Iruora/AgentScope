@@ -163,10 +163,14 @@ pub fn get_settings(runtime: State<'_, Runtime>) -> Settings {
 #[tauri::command]
 #[specta::specta]
 pub fn set_settings(
+    app: AppHandle,
     engine: State<'_, Arc<Engine>>,
     runtime: State<'_, Runtime>,
     settings: Settings,
 ) -> Result<(), String> {
+    if settings.global_shortcut != runtime.settings().global_shortcut {
+        crate::hotkey::apply(&app, &settings.global_shortcut)?;
+    }
     crate::settings::save(&runtime.data_dir, &settings).map_err(|e| e.to_string())?;
     if settings.retention_days != runtime.settings().retention_days {
         engine

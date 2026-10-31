@@ -1,4 +1,4 @@
-import { Bell, CircleAlert, CircleCheck, ClipboardCopy, FileCode2, History, Plug, RefreshCw, Stethoscope, TriangleAlert } from "lucide-react";
+import { Bell, CircleAlert, CircleCheck, ClipboardCopy, FileCode2, History, Keyboard, Plug, RefreshCw, Stethoscope, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -19,6 +19,7 @@ import {
 } from "../lib/api";
 import { elapsed, harnessNames } from "../lib/format";
 import { useNow } from "../lib/useNow";
+import { isMac, modKey } from "../components/CommandPalette";
 import type { Diff, HarnessDiagnostics, HarnessId, HookStatus, Integration, Settings as SettingsData } from "../lib/types";
 
 const statusLabels: Record<HookStatus, string> = {
@@ -41,6 +42,7 @@ export function Settings() {
       <PageIntro title="Settings" subtitle="Choose which harnesses AgentScope listens to, and when it should tap you on the shoulder." />
       <IntegrationsSection />
       <NotificationsSection />
+      <ShortcutsSection />
       <HistorySection />
       <UpdatesSection />
       <DiagnosticsSection />
@@ -573,5 +575,69 @@ function Stat({ label, children }: { label: string; children: ReactNode }) {
       <dt className="text-subtle">{label}</dt>
       <dd className="font-semibold text-ink">{children}</dd>
     </div>
+  );
+}
+
+/** Must match `hotkey::CHOICES` in the Rust app. */
+const SHORTCUT_CHOICES = ["CommandOrControl+Shift+Y", "CommandOrControl+Alt+A", "CommandOrControl+Shift+Period"];
+
+/** "CommandOrControl+Shift+Y" → "⌘ ⇧ Y" on macOS, "Ctrl+Shift+Y" elsewhere. */
+export function shortcutLabel(accelerator: string, mac = isMac): string {
+  const names: Record<string, [string, string]> = {
+    CommandOrControl: ["⌘", "Ctrl"],
+    Shift: ["⇧", "Shift"],
+    Alt: ["⌥", "Alt"],
+    Period: [".", "."],
+  };
+  const parts = accelerator.split("+").map((p) => names[p]?.[mac ? 0 : 1] ?? p);
+  return parts.join(mac ? " " : "+");
+}
+
+function ShortcutsSection() {
+  const settings = useSettings();
+  const save = useSaveSettings();
+  if (!settings.data) return null;
+  const current: SettingsData = settings.data;
+  return (
+    <SettingsCard
+      icon={Keyboard}
+      title="Shortcuts"
+      description={
+        <>
+          Press <kbd className="font-semibold">{modKey} K</kbd> in AgentScope to search sessions, views and actions. A global
+          shortcut can also take you to the agent that has waited longest for you, from any app (on Linux this needs an X11 session).
+        </>
+      }
+    >
+      <div className="flex items-center justify-between gap-4 px-5 py-3.5">
+        <label htmlFor="global-shortcut" className="text-[13px] font-semibold text-ink">
+          Go to the waiting agent
+          <span className="mt-0.5 block text-[11px] font-normal text-muted">
+            Focuses its terminal or editor. With nobody waiting, it opens AgentScope.
+          </span>
+        </label>
+        <select
+          id="global-shortcut"
+          value={current.globalShortcut}
+          disabled={save.isPending}
+          onChange={(e) => save.mutate({ ...current, globalShortcut: e.target.value })}
+          className="h-8 rounded-[9px] border border-line bg-surface px-2.5 text-[12px] font-semibold text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]"
+        >
+          <option value="">Off</option>
+          {SHORTCUT_CHOICES.map((choice) => (
+            <option key={choice} value={choice}>
+              {shortcutLabel(choice)}
+            </option>
+          ))}
+        </select>
+      </div>
+      {save.isError && (
+        <div className="px-5 pb-4">
+          <Notice tone="danger" icon={CircleAlert}>
+            {String(save.error.message)}
+          </Notice>
+        </div>
+      )}
+    </SettingsCard>
   );
 }

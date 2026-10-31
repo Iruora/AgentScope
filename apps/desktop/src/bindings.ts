@@ -480,6 +480,11 @@ export type Settings_Deserialize = {
 	onboarded?: boolean,
 	/**  Look for new versions on launch and every few hours. */
 	checkUpdates?: boolean,
+	/**
+	 *  Global shortcut that jumps to the agent waiting longest, e.g.
+	 *  `CommandOrControl+Shift+Y`. Empty when off.
+	 */
+	globalShortcut?: string,
 };
 
 export type Settings_Serialize = {
@@ -493,6 +498,11 @@ export type Settings_Serialize = {
 	onboarded: boolean,
 	/**  Look for new versions on launch and every few hours. */
 	checkUpdates: boolean,
+	/**
+	 *  Global shortcut that jumps to the agent waiting longest, e.g.
+	 *  `CommandOrControl+Shift+Y`. Empty when off.
+	 */
+	globalShortcut: string,
 };
 
 /**  What the UI renders. */

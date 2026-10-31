@@ -2,6 +2,7 @@ mod commands;
 mod diagnostics;
 mod engine;
 mod focus;
+mod hotkey;
 mod logbuf;
 mod procs;
 mod settings;
@@ -130,6 +131,7 @@ pub fn run() {
             show_main_window(app)
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -174,6 +176,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = agentscope_protocol::data_dir().ok_or("could not find a data directory")?;
     std::fs::create_dir_all(&data_dir)?;
     let settings = settings::load(&data_dir);
+    let shortcut = settings.global_shortcut.clone();
     let engine = Arc::new(Engine::open(
         &data_dir.join("agentscope.db"),
         settings.retention_days,
@@ -189,6 +192,9 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     tray::create(app)?;
+    if let Err(err) = hotkey::apply(app, &shortcut) {
+        tracing::warn!(%err, "global shortcut not registered");
+    }
     publish(
         app,
         &engine,

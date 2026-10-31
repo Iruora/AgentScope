@@ -18,6 +18,9 @@ pub struct Settings {
     pub onboarded: bool,
     /// Look for new versions on launch and every few hours.
     pub check_updates: bool,
+    /// Global shortcut that jumps to the agent waiting longest, e.g.
+    /// `CommandOrControl+Shift+Y`. Empty when off.
+    pub global_shortcut: String,
 }
 
 impl Default for Settings {
@@ -28,6 +31,7 @@ impl Default for Settings {
             retention_days: crate::engine::DEFAULT_RETENTION_DAYS,
             onboarded: false,
             check_updates: true,
+            global_shortcut: String::new(),
         }
     }
 }
@@ -72,6 +76,7 @@ mod tests {
             retention_days: 30,
             onboarded: true,
             check_updates: false,
+            global_shortcut: "CommandOrControl+Shift+Y".into(),
         };
         save(dir.path(), &off).unwrap();
         assert_eq!(load(dir.path()), off);
