@@ -57,6 +57,11 @@ export const commands = {
 	getLabels: () => typedError<SessionLabel_Serialize[], string>(__TAURI_INVOKE("get_labels")),
 	/**  Saves one session's label and returns it cleaned up. */
 	setLabel: (label: SessionLabel_Deserialize) => typedError<SessionLabel_Serialize, string>(__TAURI_INVOKE("set_label", { label })),
+	/**
+	 *  Saves the session as Markdown or JSON where the user picks, redacted.
+	 *  Returns the saved path, or `None` when the user cancels.
+	 */
+	exportSession: (sessionId: string, format: ExportFormat) => typedError<string | null, string>(__TAURI_INVOKE("export_session", { sessionId, format })),
 };
 
 /** Events */
@@ -352,6 +357,8 @@ approvalId: string | null; resolution: Resolution } | { type: "waitingForInput" 
 { type: "tokensUsed"; tokens: Tokens_Serialize } | { type: "heartbeat"; pid: number } | { type: "unknown"; event: string; raw: unknown };
 
 export type EventSource = "hook" | "transcript" | "scan" | "process";
+
+export type ExportFormat = "markdown" | "json";
 
 export type FailureStreak = {
 	summary: string,

@@ -434,3 +434,72 @@ pub fn set_label(
 ) -> Result<agentscope_core::SessionLabel, String> {
     engine.set_label(&label).map_err(|e| e.to_string())
 }
+
+/// Saves the session as Markdown or JSON where the user picks, redacted.
+/// Returns the saved path, or `None` when the user cancels.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_session(
+    app: AppHandle,
+    session_id: String,
+    format: crate::export::ExportFormat,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let engine = app.state::<Arc<Engine>>().inner().clone();
+    let data_dir = app.state::<Runtime>().data_dir.clone();
+    let session = engine
+        .session(&session_id)
+        .ok_or("This session is no longer in the history.")?;
+    let snapshot = engine.snapshot();
+    let agents: Vec<_> = snapshot
+        .agents
+        .into_iter()
+        .filter(|a| a.session_id == session_id)
+        .collect();
+    let events = engine
+        .session_events(&session_id, crate::export::MAX_EVENTS)
+        .map_err(|e| e.to_string())?;
+    let label = engine
+        .labels()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|l| l.session_id == session_id);
+    let prices = crate::usage::Prices::load(&data_dir);
+    let cost = crate::usage::session_costs(std::slice::from_ref(&session), &prices)
+        .get(&session_id)
+        .copied();
+    let export = crate::export::Export {
+        session: &session,
+        agents: &agents,
+        events: &events,
+        label: label.as_ref(),
+        cost,
+    };
+    let body = match format {
+        crate::export::ExportFormat::Markdown => crate::export::markdown(&export),
+        crate::export::ExportFormat::Json => {
+            crate::export::json(&export).map_err(|e| e.to_string())?
+        }
+    };
+    let name = crate::export::file_name(&export, format);
+    let (filter, ext) = match format {
+        crate::export::ExportFormat::Markdown => ("Markdown", "md"),
+        crate::export::ExportFormat::Json => ("JSON", "json"),
+    };
+    let dialog = app
+        .dialog()
+        .file()
+        .set_title("Export session")
+        .set_file_name(name)
+        .add_filter(filter, &[ext]);
+    let picked = tauri::async_runtime::spawn_blocking(move || dialog.blocking_save_file())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+    Ok(Some(path.display().to_string()))
+}

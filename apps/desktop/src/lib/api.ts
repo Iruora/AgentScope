@@ -91,6 +91,11 @@ export function revealTranscript(sessionId: string) {
   return unwrap(commands.revealTranscript(sessionId));
 }
 
+/** Saves a session as Markdown or JSON where the user picks. Resolves to the path, or null if cancelled. */
+export function exportSession(sessionId: string, format: "markdown" | "json") {
+  return unwrap(commands.exportSession(sessionId, format));
+}
+
 /** Calls `open` with a session id when the tray asks to show one. */
 export function useOpenSessionRequests(open: (sessionId: string) => void) {
   useEffect(() => {

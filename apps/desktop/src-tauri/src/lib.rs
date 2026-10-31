@@ -2,6 +2,7 @@ mod commands;
 mod decide;
 mod diagnostics;
 mod engine;
+mod export;
 mod files;
 mod focus;
 mod hotkey;
@@ -101,6 +102,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_file_diff,
             commands::get_labels,
             commands::set_label,
+            commands::export_session,
         ])
         .events(collect_events![
             GraphChanged,
@@ -150,6 +152,7 @@ pub fn run() {
             show_main_window(app)
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())

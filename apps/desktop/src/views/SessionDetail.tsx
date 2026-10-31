@@ -1,11 +1,11 @@
-import { ArrowLeft, ChevronRight, CircleAlert, FilePen, FileText, Network, Pencil, Pin, StickyNote } from "lucide-react";
+import { ArrowLeft, ChevronRight, CircleAlert, FilePen, FileText, Download, Network, Pencil, Pin, StickyNote } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { concernIcons, concernTitles } from "../components/Concerns";
 import { GoToAgentButton } from "../components/GoToAgentButton";
 import { StatePill, stateTones } from "../components/StatePill";
 import { Button, Card, Code, Dot, Label, Notice, cx, toneSolid, type Tone } from "../components/ui";
-import { revealTranscript, sessionTitle, useCosts, useFileDiff, useLabels, useSessionEvents, useSetLabel, useSnapshot } from "../lib/api";
+import { exportSession, revealTranscript, sessionTitle, useCosts, useFileDiff, useLabels, useSessionEvents, useSetLabel, useSnapshot } from "../lib/api";
 import { LabelBadges } from "../components/Labels";
 import { basename, clockTime, compactNumber, elapsed, harnessNames, usd } from "../lib/format";
 import type { Agent, AgentEvent, Concern, FileTouch, Session, SessionLabel } from "../lib/types";
@@ -119,6 +119,7 @@ function Header({ session }: { session: Session }) {
   const setLabel = useSetLabel();
   const [editing, setEditing] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const [exported, setExported] = useState<string | null>(null);
   const current: SessionLabel = label ?? { sessionId: session.id, pinned: false, name: null, tags: [], note: null };
   const facts: [string, React.ReactNode, string?][] = [
     ["Model", session.model ?? "Unknown"],
@@ -170,6 +171,13 @@ function Header({ session }: { session: Session }) {
           <Button icon={Pencil} aria-expanded={editing} onClick={() => setEditing((e) => !e)}>
             Label
           </Button>
+          <ExportMenu
+            onExport={(format) =>
+              exportSession(session.id, format)
+                .then((path) => path && setExported(path))
+                .catch((e) => setRevealError(String(e.message ?? e)))
+            }
+          />
           {session.transcriptPath && (
             <Button icon={FileText} onClick={() => revealTranscript(session.id).catch((e) => setRevealError(String(e.message ?? e)))}>
               Show transcript
@@ -199,6 +207,13 @@ function Header({ session }: { session: Session }) {
           </div>
         ))}
       </dl>
+      {exported && (
+        <div className="px-5 pb-4">
+          <Notice tone="work" icon={Download}>
+            Saved to <Code className="max-w-full text-[11px]">{exported}</Code>
+          </Notice>
+        </div>
+      )}
       {revealError && (
         <div className="px-5 pb-4">
           <Notice tone="danger" icon={CircleAlert}>
@@ -207,6 +222,48 @@ function Header({ session }: { session: Session }) {
         </div>
       )}
     </Card>
+  );
+}
+
+function ExportMenu({ onExport }: { onExport: (format: "markdown" | "json") => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="relative"
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+    >
+      <Button icon={Download} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        Export
+      </Button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-20 mt-1.5 w-56 overflow-hidden rounded-[10px] border border-line bg-surface p-1 shadow-card">
+          {(
+            [
+              ["markdown", "Markdown", "To read or paste in a PR"],
+              ["json", "JSON", "Everything, to keep or process"],
+            ] as const
+          ).map(([format, name, hint]) => (
+            <button
+              key={format}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onExport(format);
+              }}
+              className="flex w-full flex-col items-start rounded-[7px] px-2.5 py-1.5 text-left hover:bg-surface-2"
+            >
+              <span className="text-[12px] font-semibold text-ink">{name}</span>
+              <span className="text-[11px] text-subtle">{hint}</span>
+            </button>
+          ))}
+          <p className="border-t border-line-soft px-2.5 pt-1.5 pb-1 text-[10px] text-subtle">Keys and tokens are redacted.</p>
+        </div>
+      )}
+    </div>
   );
 }
 
