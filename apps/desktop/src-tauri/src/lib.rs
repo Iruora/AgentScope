@@ -7,6 +7,7 @@ mod hotkey;
 mod logbuf;
 mod popup;
 mod procs;
+mod push;
 mod risky;
 mod settings;
 mod shim;
@@ -90,6 +91,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::release_approval,
             commands::show_session,
             commands::close_popup,
+            commands::test_push,
         ])
         .events(collect_events![
             GraphChanged,
@@ -436,11 +438,17 @@ fn notify_user(app: &AppHandle, alerts: Vec<Alert>) {
     let now = Instant::now();
     notified.retain(|_, (_, at)| now.duration_since(*at) < NOTIFY_DEBOUNCE);
     for alert in alerts {
-        let wanted = match alert.state {
-            AgentState::WaitingApproval | AgentState::MaybeWaiting => settings.notify_approvals,
-            _ => settings.notify_input,
+        let approval = matches!(
+            alert.state,
+            AgentState::WaitingApproval | AgentState::MaybeWaiting
+        );
+        let desktop = if approval {
+            settings.notify_approvals
+        } else {
+            settings.notify_input
         };
-        if !wanted
+        let phone = settings.push.wants(approval);
+        if !(desktop || phone)
             || notified
                 .get(&alert.session_id)
                 .is_some_and(|(state, _)| *state == alert.state)
@@ -448,6 +456,15 @@ fn notify_user(app: &AppHandle, alerts: Vec<Alert>) {
             continue;
         }
         notified.insert(alert.session_id.clone(), (alert.state, now));
+        if phone {
+            push::spawn_send(
+                settings.push.clone(),
+                push::PushMessage::new(&settings.push, &alert.title, &alert.body, approval),
+            );
+        }
+        if !desktop {
+            continue;
+        }
         if let Err(err) = app
             .notification()
             .builder()

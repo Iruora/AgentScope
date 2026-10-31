@@ -28,6 +28,8 @@ pub struct Settings {
     pub confirm_risky: bool,
     /// Pop up a small always-on-top window when a prompt can be answered here.
     pub popup_approvals: bool,
+    /// Phone push, off by default.
+    pub push: crate::push::PushSettings,
 }
 
 /// The decide windows Settings offers, in seconds.
@@ -58,6 +60,7 @@ impl Default for Settings {
             decide_window_secs: DEFAULT_DECIDE_WINDOW,
             confirm_risky: true,
             popup_approvals: true,
+            push: crate::push::PushSettings::default(),
         }
     }
 }
@@ -106,6 +109,11 @@ mod tests {
             decide_window_secs: 30,
             confirm_risky: false,
             popup_approvals: false,
+            push: crate::push::PushSettings {
+                service: crate::push::PushService::Ntfy,
+                target: "my-topic".into(),
+                ..Default::default()
+            },
         };
         save(dir.path(), &off).unwrap();
         assert_eq!(load(dir.path()), off);

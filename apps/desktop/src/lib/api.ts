@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { commands, events } from "../bindings";
-import type { HarnessId, Settings, UpdateInfo } from "./types";
+import type { HarnessId, PushSettings, Settings, UpdateInfo } from "./types";
 
 const snapshotKey = ["snapshot"] as const;
 const answerableKey = ["answerable"] as const;
@@ -184,4 +184,9 @@ export function showSession(sessionId: string) {
 /** Closes the approval popup until a new prompt arrives. */
 export function closePopup() {
   return commands.closePopup();
+}
+
+/** Sends a test push with settings that are not saved yet. */
+export function useTestPush() {
+  return useMutation({ mutationFn: (push: PushSettings) => unwrap(commands.testPush(push)) });
 }

@@ -1,4 +1,4 @@
-import { Bell, CircleAlert, CircleCheck, ClipboardCopy, FileCode2, History, Keyboard, Plug, RefreshCw, ShieldCheck, Stethoscope, TriangleAlert } from "lucide-react";
+import { Bell, CircleAlert, Smartphone, CircleCheck, ClipboardCopy, FileCode2, History, Keyboard, Plug, RefreshCw, ShieldCheck, Stethoscope, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -15,12 +15,13 @@ import {
   useSaveSettings,
   useSetHooks,
   useSettings,
+  useTestPush,
   useUpdate,
 } from "../lib/api";
 import { elapsed, harnessNames } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { isMac, modKey } from "../components/CommandPalette";
-import type { Diff, HarnessDiagnostics, HarnessId, HookStatus, Integration, Settings as SettingsData } from "../lib/types";
+import type { Diff, HarnessDiagnostics, HarnessId, HookStatus, Integration, PushService, PushSettings, Settings as SettingsData } from "../lib/types";
 
 const statusLabels: Record<HookStatus, string> = {
   not_installed: "Not connected",
@@ -43,6 +44,7 @@ export function Settings() {
       <IntegrationsSection />
       <NotificationsSection />
       <AnsweringSection />
+      <PushSection />
       <ShortcutsSection />
       <HistorySection />
       <UpdatesSection />
@@ -748,6 +750,173 @@ function AnsweringSection() {
         <div className="px-5 pb-4">
           <Notice tone="danger" icon={CircleAlert}>
             {String(save.error.message)}
+          </Notice>
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+const PUSH_SERVICES: { id: PushService; name: string; target?: string; targetHint?: string; token?: string; tokenHint?: string; help: string }[] = [
+  { id: "off", name: "Off", help: "" },
+  {
+    id: "ntfy",
+    name: "ntfy",
+    target: "Topic",
+    targetHint: "agentscope-7f3k2, or https://your-server/topic",
+    token: "Access token (optional)",
+    help: "Install the ntfy app and subscribe to a topic name that is hard to guess. Anyone who knows the topic can read it.",
+  },
+  {
+    id: "pushover",
+    name: "Pushover",
+    target: "User key",
+    token: "App token",
+    help: "Create an application at pushover.net for its app token; your user key is on the dashboard.",
+  },
+  { id: "discord", name: "Discord webhook", target: "Webhook URL", targetHint: "https://discord.com/api/webhooks/…", help: "Channel settings → Integrations → Webhooks → New webhook → Copy URL." },
+  { id: "slack", name: "Slack webhook", target: "Webhook URL", targetHint: "https://hooks.slack.com/services/…", help: "Create a Slack app with an incoming webhook and copy its URL." },
+  {
+    id: "telegram",
+    name: "Telegram",
+    target: "Chat id",
+    token: "Bot token",
+    help: "Create a bot with @BotFather for its token, send it a message, then use your chat id.",
+  },
+];
+
+const inputClass =
+  "h-8 w-full rounded-[9px] border border-line bg-surface px-2.5 text-[12px] text-ink outline-none placeholder:text-subtle focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]";
+
+function PushSection() {
+  const settings = useSettings();
+  const save = useSaveSettings();
+  const test = useTestPush();
+  const [draft, setDraft] = useState<PushSettings | null>(null);
+  useEffect(() => {
+    if (settings.data && draft === null) setDraft(settings.data.push);
+  }, [settings.data, draft]);
+  if (!settings.data || !draft) return null;
+  const current: SettingsData = settings.data;
+  const service = PUSH_SERVICES.find((s) => s.id === draft.service) ?? PUSH_SERVICES[0];
+  const dirty = JSON.stringify(draft) !== JSON.stringify(current.push);
+  const update = (patch: Partial<PushSettings>) => {
+    test.reset();
+    setDraft({ ...draft, ...patch });
+  };
+  const commit = (push: PushSettings) => save.mutate({ ...current, push });
+
+  return (
+    <SettingsCard
+      icon={Smartphone}
+      title="Phone push"
+      description="Get a push on your phone when an agent needs you, through a service you choose. Off by default. When on, messages go through that service; AgentScope sends nothing else."
+    >
+      <ul className="divide-y divide-line-soft">
+        <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <label htmlFor="push-service" className="text-[13px] font-semibold text-ink">
+            Send through
+          </label>
+          <select
+            id="push-service"
+            value={draft.service}
+            disabled={save.isPending}
+            onChange={(e) => {
+              const next = { ...draft, service: e.target.value as PushService };
+              update(next);
+              if (next.service === "off") commit(next);
+            }}
+            className="h-8 rounded-[9px] border border-line bg-surface px-2.5 text-[12px] font-semibold text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]"
+          >
+            {PUSH_SERVICES.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </li>
+        {service.id !== "off" && (
+          <>
+            <li className="flex flex-col gap-3 px-5 py-3.5">
+              <p className="text-[11px] text-muted">{service.help}</p>
+              <div className={cx("grid gap-3", service.token && "sm:grid-cols-2")}>
+                <label className="flex flex-col gap-1 text-[11px] font-semibold text-muted">
+                  {service.target}
+                  <input
+                    className={inputClass}
+                    value={draft.target}
+                    placeholder={service.targetHint}
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => update({ target: e.target.value })}
+                  />
+                </label>
+                {service.token && (
+                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-muted">
+                    {service.token}
+                    <input
+                      className={inputClass}
+                      type="password"
+                      value={draft.token}
+                      autoComplete="off"
+                      onChange={(e) => update({ token: e.target.value })}
+                    />
+                  </label>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {test.isSuccess && (
+                  <span className="mr-auto inline-flex items-center gap-1 text-[11px] font-semibold text-work-text">
+                    <CircleCheck size={13} aria-hidden /> Sent. Check your phone.
+                  </span>
+                )}
+                <Button size="sm" disabled={test.isPending} onClick={() => test.mutate(draft)}>
+                  {test.isPending ? "Sending…" : "Send a test"}
+                </Button>
+                <Button size="sm" variant="primary" disabled={!dirty || save.isPending} onClick={() => commit(draft)}>
+                  Save
+                </Button>
+              </div>
+            </li>
+            <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+              <span>
+                <span className="block text-[13px] font-semibold text-ink">Include names and commands</span>
+                <span className="mt-0.5 block text-[11px] text-muted">
+                  Off sends only "An agent needs your approval", so nothing about your code passes through the service.
+                </span>
+              </span>
+              <Switch
+                checked={draft.includeDetails}
+                onChange={() => {
+                  const next = { ...draft, includeDetails: !draft.includeDetails };
+                  update(next);
+                  if (!dirty) commit(next);
+                }}
+                label="Include names and commands"
+              />
+            </li>
+            <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+              <span>
+                <span className="block text-[13px] font-semibold text-ink">Also when an agent waits for input</span>
+                <span className="mt-0.5 block text-[11px] text-muted">Otherwise only permission prompts send a push.</span>
+              </span>
+              <Switch
+                checked={draft.includeInput}
+                onChange={() => {
+                  const next = { ...draft, includeInput: !draft.includeInput };
+                  update(next);
+                  if (!dirty) commit(next);
+                }}
+                label="Also when an agent waits for input"
+              />
+            </li>
+          </>
+        )}
+      </ul>
+      {(save.isError || test.isError) && (
+        <div className="px-5 pb-4">
+          <Notice tone="danger" icon={CircleAlert}>
+            {String((test.error ?? save.error)?.message)}
           </Notice>
         </div>
       )}

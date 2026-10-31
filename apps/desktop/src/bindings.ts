@@ -42,6 +42,8 @@ export const commands = {
 	showSession: (sessionId: string) => __TAURI_INVOKE<void>("show_session", { sessionId }),
 	/**  Closes the approval popup until a new prompt arrives. */
 	closePopup: () => __TAURI_INVOKE<void>("close_popup"),
+	/**  Sends a test message with the given push settings, before saving them. */
+	testPush: (push: PushSettings_Deserialize) => typedError<null, string>(__TAURI_INVOKE("test_push", { push })),
 };
 
 /** Events */
@@ -431,6 +433,34 @@ export type PendingApproval_Serialize = {
 	resolution: Resolution | null,
 };
 
+export type PushService = "off" | "ntfy" | "pushover" | "discord" | "slack" | "telegram";
+
+export type PushSettings = PushSettings_Serialize | PushSettings_Deserialize;
+
+export type PushSettings_Deserialize = {
+	service?: PushService,
+	/**  ntfy topic or topic URL, Pushover user key, webhook URL, or Telegram chat id. */
+	target?: string,
+	/**  Pushover app token, Telegram bot token, or an optional ntfy access token. */
+	token?: string,
+	/**  Include the agent's name and the command. Off sends only that an agent is waiting. */
+	includeDetails?: boolean,
+	/**  Also push when an agent waits for input, not only for approvals. */
+	includeInput?: boolean,
+};
+
+export type PushSettings_Serialize = {
+	service: PushService,
+	/**  ntfy topic or topic URL, Pushover user key, webhook URL, or Telegram chat id. */
+	target: string,
+	/**  Pushover app token, Telegram bot token, or an optional ntfy access token. */
+	token: string,
+	/**  Include the agent's name and the command. Off sends only that an agent is waiting. */
+	includeDetails: boolean,
+	/**  Also push when an agent waits for input, not only for approvals. */
+	includeInput: boolean,
+};
+
 export type Repo = Repo_Serialize | Repo_Deserialize;
 
 export type Repo_Deserialize = {
@@ -514,6 +544,8 @@ export type Settings_Deserialize = {
 	confirmRisky?: boolean,
 	/**  Pop up a small always-on-top window when a prompt can be answered here. */
 	popupApprovals?: boolean,
+	/**  Phone push, off by default. */
+	push?: PushSettings_Deserialize,
 };
 
 export type Settings_Serialize = {
@@ -541,6 +573,8 @@ export type Settings_Serialize = {
 	confirmRisky: boolean,
 	/**  Pop up a small always-on-top window when a prompt can be answered here. */
 	popupApprovals: boolean,
+	/**  Phone push, off by default. */
+	push: PushSettings_Serialize,
 };
 
 /**  What the UI renders. */

@@ -186,6 +186,7 @@ pub fn set_settings(
             settings.decide_window_secs
         ));
     }
+    settings.push.validate()?;
     if settings.global_shortcut != runtime.settings().global_shortcut {
         crate::hotkey::apply(&app, &settings.global_shortcut)?;
     }
@@ -348,4 +349,17 @@ pub fn show_session(app: AppHandle, session_id: String) {
 #[specta::specta]
 pub fn close_popup(app: AppHandle) {
     crate::popup::close(&app);
+}
+
+/// Sends a test message with the given push settings, before saving them.
+#[tauri::command]
+#[specta::specta]
+pub async fn test_push(push: crate::push::PushSettings) -> Result<(), String> {
+    let msg = crate::push::PushMessage {
+        title: "AgentScope".into(),
+        body: "Test message: push works. You will hear from AgentScope when an agent needs you."
+            .into(),
+        approval: false,
+    };
+    crate::push::send(&push, &msg).await
 }
