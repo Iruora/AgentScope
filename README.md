@@ -55,6 +55,8 @@ To uninstall, disconnect each harness in Settings first, then delete the app. If
 
 ## Documentation
 
+- Website: [iruora.github.io/AgentScope](https://iruora.github.io/AgentScope/) (source in `site/`)
+
 - [v1 spec](docs/SPEC.md)
 - [Harness research](docs/research/harnesses.md)
 - Adapter notes: [Claude Code](docs/adapters/claude-code.md), [Codex](docs/adapters/codex.md),
