@@ -1,6 +1,8 @@
 mod commands;
+mod diagnostics;
 mod engine;
 mod focus;
+mod logbuf;
 mod procs;
 mod settings;
 mod shim;
@@ -76,6 +78,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::check_for_update,
             commands::install_update,
             commands::open_release_page,
+            commands::get_diagnostics,
+            commands::copy_debug_report,
+            commands::open_new_issue,
         ])
         .events(collect_events![
             GraphChanged,
@@ -96,10 +101,23 @@ fn export_bindings(builder: &tauri_specta::Builder<tauri::Wry>) {
 }
 
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,agentscope=debug".into()),
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer().with_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info,agentscope=debug".into()),
+            ),
+        )
+        // Warnings and errors are also kept for Settings → Diagnostics.
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(logbuf::RecentLogs)
+                .with_filter(tracing_subscriber::filter::LevelFilter::WARN),
         )
         .init();
 
@@ -111,6 +129,7 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app)
         }))
+        .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())

@@ -1,4 +1,4 @@
-import { Bell, CircleAlert, CircleCheck, FileCode2, History, Plug, RefreshCw, TriangleAlert } from "lucide-react";
+import { Bell, CircleAlert, CircleCheck, ClipboardCopy, FileCode2, History, Plug, RefreshCw, Stethoscope, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -7,6 +7,9 @@ import { Button, Card, Code, IconTile, Notice, PageIntro, Pill, cx, type Tone } 
 import {
   useAppInfo,
   useCheckForUpdate,
+  useCopyDebugReport,
+  useDiagnostics,
+  useOpenNewIssue,
   useInstallUpdate,
   useIntegrations,
   useSaveSettings,
@@ -14,8 +17,9 @@ import {
   useSettings,
   useUpdate,
 } from "../lib/api";
-import { harnessNames } from "../lib/format";
-import type { Diff, HarnessId, HookStatus, Integration, Settings as SettingsData } from "../lib/types";
+import { elapsed, harnessNames } from "../lib/format";
+import { useNow } from "../lib/useNow";
+import type { Diff, HarnessDiagnostics, HarnessId, HookStatus, Integration, Settings as SettingsData } from "../lib/types";
 
 const statusLabels: Record<HookStatus, string> = {
   not_installed: "Not connected",
@@ -39,6 +43,7 @@ export function Settings() {
       <NotificationsSection />
       <HistorySection />
       <UpdatesSection />
+      <DiagnosticsSection />
     </div>
   );
 }
@@ -475,5 +480,98 @@ function UpdatesSection() {
         </div>
       )}
     </SettingsCard>
+  );
+}
+
+/** True when the detected version is outside the release line the adapter was tested with. */
+export function untestedVersion(h: HarnessDiagnostics): boolean {
+  if (!h.version || !/^\d/.test(h.testedVersion)) return false;
+  const version = h.version.match(/\d+(\.\d+)*/)?.[0] ?? "";
+  return version !== h.testedVersion && !version.startsWith(`${h.testedVersion}.`);
+}
+
+function DiagnosticsSection() {
+  const diagnostics = useDiagnostics();
+  const copy = useCopyDebugReport();
+  const openIssue = useOpenNewIssue();
+  const now = useNow();
+  const d = diagnostics.data;
+  if (!d) return null;
+  const error = copy.error ?? openIssue.error;
+
+  return (
+    <SettingsCard
+      icon={Stethoscope}
+      title="Diagnostics"
+      description="What each harness has sent since AgentScope started. If something looks wrong, copy the debug report into a GitHub issue. It hides your home folder and anything that looks like a secret."
+    >
+      <ul className="divide-y divide-line-soft">
+        {d.harnesses
+          .filter((h) => h.installed || h.hooksReceived > 0 || h.transcriptEvents > 0)
+          .map((h) => (
+            <li key={h.harness} className="px-5 py-3.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-[13px] font-semibold text-ink">{harnessNames[h.harness]}</p>
+                <Pill>{h.version ? `v${h.version}` : "version unknown"}</Pill>
+                {untestedVersion(h) && (
+                  <Pill tone="warn" icon={TriangleAlert}>
+                    Tested with {h.testedVersion}.x
+                  </Pill>
+                )}
+                <Pill tone={statusTones[h.hookStatus]}>{statusLabels[h.hookStatus]}</Pill>
+              </div>
+              <dl className="mt-2 grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-x-4 gap-y-1 text-[11px]">
+                <Stat label="Hook events">
+                  {h.hooksReceived}
+                  {h.unhandledHooks > 0 && <span className="text-warn-text"> ({h.unhandledHooks} not understood)</span>}
+                </Stat>
+                <Stat label="Last hook">
+                  {h.lastHookAt ? `${elapsed(h.lastHookAt, now)} ago · ${h.lastHookEvent ?? ""}` : "none yet"}
+                </Stat>
+                <Stat label="Transcript events">{h.transcriptEvents}</Stat>
+                <Stat label="Live sessions">{h.liveSessions}</Stat>
+              </dl>
+              {h.hookStatus === "installed" && h.hooksReceived === 0 && h.liveSessions > 0 && (
+                <p className="mt-1.5 text-[11px] text-warn-text">
+                  Connected, but no hook has arrived while a session is live. Restart that session so it loads the hooks.
+                </p>
+              )}
+            </li>
+          ))}
+        <li className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5">
+          <span className="text-[11px] text-muted">
+            Listening on {d.ingestPort ? `127.0.0.1:${d.ingestPort}` : "nothing (hooks are being spooled)"}
+            {" · "}
+            {d.spoolFiles > 0 ? `${d.spoolFiles} spooled file(s) waiting` : "spool empty"}
+            {!d.shimPath && " · hook helper missing"}
+            {d.recentLogs.length > 0 && ` · ${d.recentLogs.length} recent warning(s)`}
+          </span>
+          <span className="flex gap-2">
+            <Button size="sm" icon={ClipboardCopy} disabled={copy.isPending} onClick={() => copy.mutate()}>
+              {copy.isSuccess ? "Copied" : "Copy debug report"}
+            </Button>
+            <Button size="sm" onClick={() => openIssue.mutate()}>
+              Report a problem
+            </Button>
+          </span>
+        </li>
+      </ul>
+      {error && (
+        <div className="px-5 pb-4">
+          <Notice tone="danger" icon={CircleAlert}>
+            {error.message}
+          </Notice>
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+function Stat({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex gap-1.5">
+      <dt className="text-subtle">{label}</dt>
+      <dd className="font-semibold text-ink">{children}</dd>
+    </div>
   );
 }

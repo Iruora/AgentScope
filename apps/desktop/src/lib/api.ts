@@ -129,3 +129,23 @@ export function useInstallUpdate() {
       unwrap(update.canInstall ? commands.installUpdate() : commands.openReleasePage()),
   });
 }
+
+/** Settings → Diagnostics, refreshed while it is on screen. */
+export function useDiagnostics() {
+  return useQuery({
+    queryKey: ["diagnostics"],
+    queryFn: () => commands.getDiagnostics(),
+    refetchInterval: 5000,
+  });
+}
+
+/** Copies the redacted debug report to the clipboard. */
+export function useCopyDebugReport() {
+  return useMutation({
+    mutationFn: () => unwrap(commands.copyDebugReport()),
+  });
+}
+
+export function useOpenNewIssue() {
+  return useMutation({ mutationFn: () => unwrap(commands.openNewIssue()) });
+}
