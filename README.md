@@ -6,8 +6,8 @@ AgentScope is a free, open source desktop app for macOS, Windows and Linux. It s
 
 ![The Approvals view, with Codex, Copilot CLI and Cursor agents waiting](docs/images/approvals.png)
 
-- **Observe only.** AgentScope never answers prompts or changes what an agent does. Its hooks run in the background and fail open, so even a broken install cannot block an agent.
-- **Local only.** Everything is read and stored on your machine. The only network call is the update check against GitHub Releases, which you can turn off in Settings.
+- **Observe by default.** AgentScope never answers prompts or changes what an agent does unless you turn on answering for a harness. Its hooks fail open, so even a broken install cannot block an agent.
+- **Local only.** Everything is read and stored on your machine. The only network calls are the update check against GitHub Releases, which you can turn off, and phone push if you turn it on.
 - **Reversible.** Connecting a harness shows the exact config diff first, backs up the original, and Disconnect removes only what was added.
 
 ## Install
@@ -48,6 +48,14 @@ On first launch AgentScope lists the harnesses it found and lets you connect eac
 | Codex | `~/.codex/hooks.json` (trust it once with `/hooks` in Codex) | rollouts in `~/.codex/sessions` |
 | Copilot CLI | its own file, `~/.copilot/hooks/agentscope.json` | `events.jsonl` and lock files in `~/.copilot/session-state` |
 | Cursor | `~/.cursor/hooks.json` | hooks only; approvals are inferred and marked *inferred* |
+
+### Answering approvals (Claude Code)
+
+Turn on **Answer approvals from AgentScope** for Claude Code in **Settings → Integrations** to approve or deny its permission prompts from the Approvals inbox, the tray menu, or a small popup that appears in the corner of the screen without taking focus. A prompt waits in AgentScope for the time you choose (60 seconds by default); if you don't answer, press **Ask in terminal**, or AgentScope is closed, Claude Code asks in the terminal as usual. Commands that look risky, like `rm -rf`, a force push or a piped install, take a second click unless you turn that off.
+
+### Phone push
+
+**Settings → Phone push** sends the same alerts to your phone through ntfy, Pushover, a Discord or Slack webhook, or a Telegram bot. It is off by default, and unless you include names and commands, the message only says that an agent needs you.
 
 Ended sessions stay in **History** for 7 days by default; change it in **Settings → History**.
 

@@ -24,6 +24,10 @@ use crate::{Diff, HookPlan, HookStatus, Result};
 
 const HOOK_TIMEOUT_SECS: u64 = 10;
 
+/// Longer than the app's longest decide window, so Claude Code never kills
+/// the shim before AgentScope lets go of the prompt.
+const DECIDE_TIMEOUT_SECS: u64 = agentscope_core::DECIDE_MAX_WAIT_SECS + 10;
+
 fn hook_entry(shim: &Path, event: &str) -> Value {
     json!({
         "type": "command",
@@ -34,19 +38,38 @@ fn hook_entry(shim: &Path, event: &str) -> Value {
     })
 }
 
+/// With approvals answered from AgentScope, `PermissionRequest` waits for the
+/// user's answer instead of running in the background. If AgentScope gives no
+/// answer, the shim prints nothing and Claude Code asks as usual.
+fn decide_entry(shim: &Path, event: &str) -> Option<Value> {
+    (event == "PermissionRequest").then(|| {
+        json!({
+            "type": "command",
+            "command": shim.display().to_string(),
+            "args": ["--harness", "claude-code", "--event", event, "--decide"],
+            "timeout": DECIDE_TIMEOUT_SECS,
+        })
+    })
+}
+
 const CONFIG: HookConfig<'static> = HookConfig {
     events: EVENTS,
     entry: &hook_entry,
     grouped: true,
     required: &[],
+    decide_entry: Some(&decide_entry),
 };
+
+pub fn answers(path: &Path) -> bool {
+    CONFIG.answers(path)
+}
 
 pub fn status(path: &Path, shim: &Path) -> HookStatus {
     CONFIG.status(path, shim)
 }
 
 pub fn install(path: &Path, plan: &HookPlan) -> Result<Diff> {
-    CONFIG.install(path, &plan.shim_path, plan.dry_run)
+    CONFIG.install(path, &plan.shim_path, plan.dry_run, plan.answer_approvals)
 }
 
 pub fn uninstall(path: &Path, dry_run: bool) -> Result<Diff> {
@@ -75,6 +98,7 @@ mod tests {
         HookPlan {
             shim_path: PathBuf::from(shim),
             dry_run,
+            answer_approvals: false,
         }
     }
 
@@ -145,6 +169,45 @@ mod tests {
 
         uninstall(&path, false).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "{}\n");
+    }
+
+    #[test]
+    fn answering_approvals_swaps_only_the_permission_hook() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        let shim = "/x/agentscope-hook";
+        install(&path, &plan(shim, false)).unwrap();
+        assert!(!answers(&path));
+
+        let answering = HookPlan {
+            answer_approvals: true,
+            ..plan(shim, false)
+        };
+        install(&path, &answering).unwrap();
+        assert!(answers(&path));
+        assert_eq!(status(&path, Path::new(shim)), HookStatus::Installed);
+        let written: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();
+        let perm = &written["hooks"]["PermissionRequest"][0]["hooks"][0];
+        assert_eq!(perm["args"][4], "--decide");
+        assert!(perm.get("async").is_none(), "it must block to answer");
+        assert!(perm["timeout"].as_u64().unwrap() > agentscope_core::DECIDE_MAX_WAIT_SECS);
+        let stop = &written["hooks"]["Stop"][0]["hooks"][0];
+        assert_eq!(
+            stop["async"], true,
+            "everything else stays in the background"
+        );
+        assert_eq!(
+            written["hooks"]["PermissionRequest"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        install(&path, &plan(shim, false)).unwrap();
+        assert!(!answers(&path));
+        uninstall(&path, false).unwrap();
+        assert!(!answers(&path));
     }
 
     #[test]

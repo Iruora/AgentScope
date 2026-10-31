@@ -92,6 +92,7 @@ mod tests {
         let plan = HookPlan {
             shim_path: shim.clone(),
             dry_run: false,
+            answer_approvals: false,
         };
         let diff = install(&path, &plan).unwrap();
         assert_eq!(diff.before, None);

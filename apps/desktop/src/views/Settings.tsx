@@ -1,4 +1,4 @@
-import { Bell, CircleAlert, CircleCheck, ClipboardCopy, FileCode2, History, Keyboard, Plug, RefreshCw, Stethoscope, TriangleAlert } from "lucide-react";
+import { Bell, CircleAlert, Smartphone, CircleCheck, ClipboardCopy, FileCode2, History, Keyboard, Plug, RefreshCw, ShieldCheck, Stethoscope, TriangleAlert } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
@@ -15,12 +15,13 @@ import {
   useSaveSettings,
   useSetHooks,
   useSettings,
+  useTestPush,
   useUpdate,
 } from "../lib/api";
 import { elapsed, harnessNames } from "../lib/format";
 import { useNow } from "../lib/useNow";
 import { isMac, modKey } from "../components/CommandPalette";
-import type { Diff, HarnessDiagnostics, HarnessId, HookStatus, Integration, Settings as SettingsData } from "../lib/types";
+import type { Diff, HarnessDiagnostics, HarnessId, HookStatus, Integration, PushService, PushSettings, Settings as SettingsData } from "../lib/types";
 
 const statusLabels: Record<HookStatus, string> = {
   not_installed: "Not connected",
@@ -42,6 +43,8 @@ export function Settings() {
       <PageIntro title="Settings" subtitle="Choose which harnesses AgentScope listens to, and when it should tap you on the shoulder." />
       <IntegrationsSection />
       <NotificationsSection />
+      <AnsweringSection />
+      <PushSection />
       <ShortcutsSection />
       <HistorySection />
       <UpdatesSection />
@@ -75,7 +78,7 @@ function SettingsCard({
   );
 }
 
-type Pending = { harness: HarnessId; connect: boolean; diff: Diff };
+type Pending = { harness: HarnessId; connect: boolean; answer: boolean; title: string; diff: Diff };
 
 export function IntegrationsSection() {
   const integrations = useIntegrations();
@@ -83,11 +86,11 @@ export function IntegrationsSection() {
   const [pending, setPending] = useState<Pending | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  const preview = async (harness: HarnessId, connect: boolean) => {
+  const preview = async (harness: HarnessId, connect: boolean, answer: boolean, title: string) => {
     setError(null);
     try {
-      const diff = await setHooks.mutateAsync({ harness, connect, dryRun: true });
-      setPending({ harness, connect, diff });
+      const diff = await setHooks.mutateAsync({ harness, connect, dryRun: true, answerApprovals: answer });
+      setPending({ harness, connect, answer, title, diff });
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
@@ -95,7 +98,12 @@ export function IntegrationsSection() {
   const apply = async () => {
     if (!pending) return;
     try {
-      await setHooks.mutateAsync({ harness: pending.harness, connect: pending.connect, dryRun: false });
+      await setHooks.mutateAsync({
+        harness: pending.harness,
+        connect: pending.connect,
+        dryRun: false,
+        answerApprovals: pending.answer,
+      });
       setPending(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -108,7 +116,7 @@ export function IntegrationsSection() {
     <SettingsCard
       icon={Plug}
       title="Integrations"
-      description="Connecting adds observe-only hooks to the harness's user settings, so AgentScope sees sessions, tool calls, and approval prompts the moment they happen. The hooks run in the background, never answer prompts, and Disconnect removes exactly what was added. Without hooks, AgentScope still follows transcripts and running processes."
+      description="Connecting adds observe-only hooks to the harness's user settings, so AgentScope sees sessions, tool calls, and approval prompts the moment they happen. The hooks run in the background and Disconnect removes exactly what was added. They never answer prompts unless you turn on answering for a harness below. Without hooks, AgentScope still follows transcripts and running processes."
     >
       {(shimMissing || error) && (
         <div className="flex flex-col gap-2 px-5 pt-4">
@@ -131,8 +139,18 @@ export function IntegrationsSection() {
             key={i.detection.harness}
             integration={i}
             disabled={shimMissing || setHooks.isPending}
-            onConnect={() => preview(i.detection.harness, true)}
-            onDisconnect={() => preview(i.detection.harness, false)}
+            onConnect={() => preview(i.detection.harness, true, i.answers, `Connect ${harnessNames[i.detection.harness]}`)}
+            onDisconnect={() => preview(i.detection.harness, false, false, `Disconnect ${harnessNames[i.detection.harness]}`)}
+            onToggleAnswer={() =>
+              preview(
+                i.detection.harness,
+                true,
+                !i.answers,
+                i.answers
+                  ? `Stop answering ${harnessNames[i.detection.harness]} approvals here`
+                  : `Answer ${harnessNames[i.detection.harness]} approvals from AgentScope`,
+              )
+            }
           />
         ))}
       </ul>
@@ -161,11 +179,13 @@ function IntegrationRow({
   disabled,
   onConnect,
   onDisconnect,
+  onToggleAnswer,
 }: {
   integration: Integration;
   disabled: boolean;
   onConnect: () => void;
   onDisconnect: () => void;
+  onToggleAnswer: () => void;
 }) {
   const { detection, hookStatus } = integration;
   const connected = hookStatus === "installed" || hookStatus === "needs_trust";
@@ -191,6 +211,21 @@ function IntegrationRow({
             {status}
           </div>
           {detection.configDir && <Code className="mt-1 inline-block max-w-full">{detection.configDir}</Code>}
+          {integration.canAnswer && hookStatus === "installed" && (
+            <label className="mt-2 flex items-center gap-2.5 text-[12px] text-ink-2">
+              <Switch
+                checked={integration.answers}
+                onChange={disabled ? () => {} : onToggleAnswer}
+                label="Answer approvals from AgentScope"
+              />
+              <span>
+                <span className="font-semibold">Answer approvals from AgentScope</span>
+                <span className="block text-[11px] text-muted">
+                  Approve or deny prompts in the Approvals inbox. Without an answer, the terminal asks as usual.
+                </span>
+              </span>
+            </label>
+          )}
           {hookStatus === "needs_trust" && (
             <p className="mt-1.5 text-[11px] text-warn-text">
               Codex runs new hooks only after you trust them: open Codex, type <code className="font-mono">/hooks</code>,
@@ -255,10 +290,10 @@ function DiffDialog({
   onCancel: () => void;
   onConfirm: () => void;
 }) {
-  const { diff, connect, harness } = pending;
+  const { diff, connect, title } = pending;
   const unchanged = diff.before === diff.after;
   const lines = diffLines(diff.before ?? "", diff.after ?? "");
-  const verb = connect ? "Connect" : "Disconnect";
+  const verb = connect ? (title.startsWith("Connect") ? "Connect" : "Apply") : "Disconnect";
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -279,7 +314,7 @@ function DiffDialog({
         <header className="border-b border-line-soft px-5 pt-[18px] pb-3.5">
           <p className="mb-1 text-[11px] font-semibold text-muted">Review the change</p>
           <h3 id="diff-title" className="text-[17px] font-bold text-ink">
-            {verb} {harnessNames[harness]}
+            {title}
           </h3>
           <p className="mt-1.5 flex flex-wrap items-center gap-1 text-[12px] text-muted">
             <FileCode2 size={13} aria-hidden />
@@ -635,6 +670,253 @@ function ShortcutsSection() {
         <div className="px-5 pb-4">
           <Notice tone="danger" icon={CircleAlert}>
             {String(save.error.message)}
+          </Notice>
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+/** Must match `DECIDE_WINDOWS` in the Rust settings. */
+const DECIDE_WINDOWS = [15, 30, 60, 120];
+
+function AnsweringSection() {
+  const settings = useSettings();
+  const save = useSaveSettings();
+  const integrations = useIntegrations();
+  if (!settings.data) return null;
+  const current: SettingsData = settings.data;
+  const answering = (integrations.data?.harnesses ?? []).filter((i) => i.answers);
+  return (
+    <SettingsCard
+      icon={ShieldCheck}
+      title="Answering approvals"
+      description={
+        answering.length
+          ? `On for ${answering.map((i) => harnessNames[i.detection.harness]).join(", ")}. Prompts wait in the Approvals inbox for your answer, then go back to the terminal.`
+          : "Off. Turn it on per harness under Integrations. Only Claude Code supports it so far."
+      }
+    >
+      <ul className="divide-y divide-line-soft">
+        <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <label htmlFor="decide-window" className="text-[13px] font-semibold text-ink">
+            Wait for an answer here for
+            <span className="mt-0.5 block text-[11px] font-normal text-muted">
+              Then the agent asks in its terminal instead. Ask in terminal hands a prompt back at once.
+            </span>
+          </label>
+          <select
+            id="decide-window"
+            value={current.decideWindowSecs}
+            disabled={save.isPending}
+            onChange={(e) => save.mutate({ ...current, decideWindowSecs: Number(e.target.value) })}
+            className="h-8 rounded-[9px] border border-line bg-surface px-2.5 text-[12px] font-semibold text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]"
+          >
+            {DECIDE_WINDOWS.map((secs) => (
+              <option key={secs} value={secs}>
+                {secs < 60 ? `${secs} seconds` : `${secs / 60} minute${secs === 60 ? "" : "s"}`}
+              </option>
+            ))}
+          </select>
+        </li>
+        <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <span>
+            <span className="block text-[13px] font-semibold text-ink">Confirm risky commands</span>
+            <span className="mt-0.5 block text-[11px] text-muted">
+              Approving a command like rm -rf, a force push or a piped install takes a second click.
+            </span>
+          </span>
+          <Switch
+            checked={current.confirmRisky}
+            onChange={() => save.mutate({ ...current, confirmRisky: !current.confirmRisky })}
+            label="Confirm risky commands"
+          />
+        </li>
+        <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <span>
+            <span className="block text-[13px] font-semibold text-ink">Pop up a small window</span>
+            <span className="mt-0.5 block text-[11px] text-muted">
+              A prompt you can answer here opens a small window in the corner of the screen. It never takes focus from what you are typing.
+            </span>
+          </span>
+          <Switch
+            checked={current.popupApprovals}
+            onChange={() => save.mutate({ ...current, popupApprovals: !current.popupApprovals })}
+            label="Pop up a small window"
+          />
+        </li>
+      </ul>
+      {save.isError && (
+        <div className="px-5 pb-4">
+          <Notice tone="danger" icon={CircleAlert}>
+            {String(save.error.message)}
+          </Notice>
+        </div>
+      )}
+    </SettingsCard>
+  );
+}
+
+const PUSH_SERVICES: { id: PushService; name: string; target?: string; targetHint?: string; token?: string; tokenHint?: string; help: string }[] = [
+  { id: "off", name: "Off", help: "" },
+  {
+    id: "ntfy",
+    name: "ntfy",
+    target: "Topic",
+    targetHint: "agentscope-7f3k2, or https://your-server/topic",
+    token: "Access token (optional)",
+    help: "Install the ntfy app and subscribe to a topic name that is hard to guess. Anyone who knows the topic can read it.",
+  },
+  {
+    id: "pushover",
+    name: "Pushover",
+    target: "User key",
+    token: "App token",
+    help: "Create an application at pushover.net for its app token; your user key is on the dashboard.",
+  },
+  { id: "discord", name: "Discord webhook", target: "Webhook URL", targetHint: "https://discord.com/api/webhooks/…", help: "Channel settings → Integrations → Webhooks → New webhook → Copy URL." },
+  { id: "slack", name: "Slack webhook", target: "Webhook URL", targetHint: "https://hooks.slack.com/services/…", help: "Create a Slack app with an incoming webhook and copy its URL." },
+  {
+    id: "telegram",
+    name: "Telegram",
+    target: "Chat id",
+    token: "Bot token",
+    help: "Create a bot with @BotFather for its token, send it a message, then use your chat id.",
+  },
+];
+
+const inputClass =
+  "h-8 w-full rounded-[9px] border border-line bg-surface px-2.5 text-[12px] text-ink outline-none placeholder:text-subtle focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]";
+
+function PushSection() {
+  const settings = useSettings();
+  const save = useSaveSettings();
+  const test = useTestPush();
+  const [draft, setDraft] = useState<PushSettings | null>(null);
+  useEffect(() => {
+    if (settings.data && draft === null) setDraft(settings.data.push);
+  }, [settings.data, draft]);
+  if (!settings.data || !draft) return null;
+  const current: SettingsData = settings.data;
+  const service = PUSH_SERVICES.find((s) => s.id === draft.service) ?? PUSH_SERVICES[0];
+  const dirty = JSON.stringify(draft) !== JSON.stringify(current.push);
+  const update = (patch: Partial<PushSettings>) => {
+    test.reset();
+    setDraft({ ...draft, ...patch });
+  };
+  const commit = (push: PushSettings) => save.mutate({ ...current, push });
+
+  return (
+    <SettingsCard
+      icon={Smartphone}
+      title="Phone push"
+      description="Get a push on your phone when an agent needs you, through a service you choose. Off by default. When on, messages go through that service; AgentScope sends nothing else."
+    >
+      <ul className="divide-y divide-line-soft">
+        <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <label htmlFor="push-service" className="text-[13px] font-semibold text-ink">
+            Send through
+          </label>
+          <select
+            id="push-service"
+            value={draft.service}
+            disabled={save.isPending}
+            onChange={(e) => {
+              const next = { ...draft, service: e.target.value as PushService };
+              update(next);
+              if (next.service === "off") commit(next);
+            }}
+            className="h-8 rounded-[9px] border border-line bg-surface px-2.5 text-[12px] font-semibold text-ink outline-none focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]"
+          >
+            {PUSH_SERVICES.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </select>
+        </li>
+        {service.id !== "off" && (
+          <>
+            <li className="flex flex-col gap-3 px-5 py-3.5">
+              <p className="text-[11px] text-muted">{service.help}</p>
+              <div className={cx("grid gap-3", service.token && "sm:grid-cols-2")}>
+                <label className="flex flex-col gap-1 text-[11px] font-semibold text-muted">
+                  {service.target}
+                  <input
+                    className={inputClass}
+                    value={draft.target}
+                    placeholder={service.targetHint}
+                    spellCheck={false}
+                    autoComplete="off"
+                    onChange={(e) => update({ target: e.target.value })}
+                  />
+                </label>
+                {service.token && (
+                  <label className="flex flex-col gap-1 text-[11px] font-semibold text-muted">
+                    {service.token}
+                    <input
+                      className={inputClass}
+                      type="password"
+                      value={draft.token}
+                      autoComplete="off"
+                      onChange={(e) => update({ token: e.target.value })}
+                    />
+                  </label>
+                )}
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {test.isSuccess && (
+                  <span className="mr-auto inline-flex items-center gap-1 text-[11px] font-semibold text-work-text">
+                    <CircleCheck size={13} aria-hidden /> Sent. Check your phone.
+                  </span>
+                )}
+                <Button size="sm" disabled={test.isPending} onClick={() => test.mutate(draft)}>
+                  {test.isPending ? "Sending…" : "Send a test"}
+                </Button>
+                <Button size="sm" variant="primary" disabled={!dirty || save.isPending} onClick={() => commit(draft)}>
+                  Save
+                </Button>
+              </div>
+            </li>
+            <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+              <span>
+                <span className="block text-[13px] font-semibold text-ink">Include names and commands</span>
+                <span className="mt-0.5 block text-[11px] text-muted">
+                  Off sends only "An agent needs your approval", so nothing about your code passes through the service.
+                </span>
+              </span>
+              <Switch
+                checked={draft.includeDetails}
+                onChange={() => {
+                  const next = { ...draft, includeDetails: !draft.includeDetails };
+                  update(next);
+                  if (!dirty) commit(next);
+                }}
+                label="Include names and commands"
+              />
+            </li>
+            <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+              <span>
+                <span className="block text-[13px] font-semibold text-ink">Also when an agent waits for input</span>
+                <span className="mt-0.5 block text-[11px] text-muted">Otherwise only permission prompts send a push.</span>
+              </span>
+              <Switch
+                checked={draft.includeInput}
+                onChange={() => {
+                  const next = { ...draft, includeInput: !draft.includeInput };
+                  update(next);
+                  if (!dirty) commit(next);
+                }}
+                label="Also when an agent waits for input"
+              />
+            </li>
+          </>
+        )}
+      </ul>
+      {(save.isError || test.isError) && (
+        <div className="px-5 pb-4">
+          <Notice tone="danger" icon={CircleAlert}>
+            {String((test.error ?? save.error)?.message)}
           </Notice>
         </div>
       )}

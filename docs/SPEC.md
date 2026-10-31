@@ -21,7 +21,7 @@ and which ones are blocked waiting for the user's approval.
 - Recent history (last 7 days by default) from on-disk transcripts.
 - **Observe only.** Pending approvals are shown, and "Go to agent" focuses the
   terminal or IDE window where the user answers. AgentScope never answers an
-  approval in v1.
+  approval in v1. (v1.3 adds opt-in answering for Claude Code; see section 9.)
 - Desktop notifications when an agent starts waiting on the user.
 
 ### Out of scope for v1
@@ -345,3 +345,32 @@ Decided (2026-10-27):
   source, and there is no free signing for macOS. The README covers the
   one-time first-launch step, and the release workflow can sign later by
   adding secrets. The in-app updater is left for a later release.
+
+## 9. Answering approvals (v1.3)
+
+Opt-in per harness, Claude Code only so far. Turning it on swaps the async
+`PermissionRequest` hook for a synchronous one that runs
+`agentscope-hook --decide` (timeout `DECIDE_MAX_WAIT_SECS` + 10 s).
+
+1. The shim POSTs the event to `/v1/decide` and waits up to
+   `DECIDE_MAX_WAIT_SECS` (130 s) for `{ "decision": null | {"behavior": "allow"} | {"behavior": "deny", "message"} }`.
+2. The app ingests the event as usual, registers the request against the new
+   approval id, and holds it for the decide window (Settings, 60 s default).
+3. Approve or Deny (inbox, tray, popup) answers the request and marks the
+   approval resolved. The shim prints Claude Code's
+   `hookSpecificOutput.decision`.
+4. Ask in terminal, the window running out, the approval closing elsewhere,
+   or the app being unreachable all end with an empty answer: the shim prints
+   nothing and Claude Code shows its own prompt. If the app is offline the
+   shim spools the event like any other.
+
+Risky-looking commands (`apps/desktop/src/lib/risky-patterns.json`, shared by
+the UI and the tray) take a second click while "Confirm risky commands" is on.
+The popup opens unfocused so keystrokes meant for a terminal never answer it.
+
+Still to verify on a real machine: whether Claude Code draws its terminal
+dialog while the hook waits, or only after the hook returns empty.
+
+Phone push (also v1.3) sends desktop-notification alerts through ntfy,
+Pushover, Discord/Slack webhooks or Telegram. Off by default; without
+"include names and commands" the text is generic.

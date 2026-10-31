@@ -15,6 +15,8 @@ export type {
   HookStatus,
   Integration_Serialize as Integration,
   PendingApproval_Serialize as PendingApproval,
+  PushService,
+  PushSettings_Serialize as PushSettings,
   Session_Serialize as Session,
   Settings_Serialize as Settings,
   Snapshot_Serialize as Snapshot,

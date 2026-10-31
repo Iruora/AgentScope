@@ -18,4 +18,8 @@ serde_json.workspace = true
 windows-sys = { workspace = true, features = ["Win32_Foundation", "Win32_System_Diagnostics_ToolHelp"] }
 
 [dev-dependencies]
+# Only for the end-to-end test against the real ingest server; the shim
+# binary itself stays dependency-light.
+agentscope-core.workspace = true
 tempfile.workspace = true
+tokio.workspace = true

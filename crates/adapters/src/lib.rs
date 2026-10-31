@@ -41,6 +41,14 @@ pub trait Adapter: Send + Sync {
         Vec::new()
     }
     fn match_process(&self, p: &ProcessInfo) -> Option<ProcessMatch>;
+    /// Whether this harness accepts an answer to a permission prompt from a hook.
+    fn can_answer_approvals(&self) -> bool {
+        false
+    }
+    /// Whether the installed hooks let AgentScope answer permission prompts.
+    fn answers_approvals(&self) -> bool {
+        false
+    }
 }
 
 /// Every adapter, in display order.
@@ -105,6 +113,9 @@ pub struct HookPlan {
     pub shim_path: PathBuf,
     /// Return the diff without writing anything.
     pub dry_run: bool,
+    /// Let the user answer permission prompts from AgentScope, where the
+    /// harness supports it ([`Adapter::can_answer_approvals`]).
+    pub answer_approvals: bool,
 }
 
 /// A config change shown to the user before it is written.

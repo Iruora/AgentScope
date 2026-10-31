@@ -11,7 +11,7 @@ pub mod repo;
 pub mod store;
 pub mod tail;
 
-pub use agentscope_protocol::{HarnessId, RawHookEvent};
+pub use agentscope_protocol::{Decision, HarnessId, RawHookEvent, DECIDE_MAX_WAIT_SECS};
 pub use event::{AgentEvent, EventKind, EventSource};
 pub use model::*;
 pub use reducer::{Changes, Graph, Snapshot};

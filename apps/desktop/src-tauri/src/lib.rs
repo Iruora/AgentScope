@@ -1,10 +1,14 @@
 mod commands;
+mod decide;
 mod diagnostics;
 mod engine;
 mod focus;
 mod hotkey;
 mod logbuf;
+mod popup;
 mod procs;
+mod push;
+mod risky;
 mod settings;
 mod shim;
 mod tray;
@@ -15,7 +19,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
-use agentscope_core::ingest::{drain_spool, IngestServer};
+use agentscope_core::ingest::{drain_spool, DecideRequest, IngestServer};
 use agentscope_core::AgentState;
 use notify::{RecursiveMode, Watcher};
 use tauri::{AppHandle, Emitter, Manager, RunEvent, WindowEvent};
@@ -82,6 +86,12 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_diagnostics,
             commands::copy_debug_report,
             commands::open_new_issue,
+            commands::get_answerable,
+            commands::answer_approval,
+            commands::release_approval,
+            commands::show_session,
+            commands::close_popup,
+            commands::test_push,
         ])
         .events(collect_events![
             GraphChanged,
@@ -182,27 +192,21 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         settings.retention_days,
     )?);
     app.manage(engine.clone());
+    app.manage(decide::Decisions::default());
     app.manage(updater::PendingUpdate::default());
     app.manage(Runtime {
         settings: Mutex::new(settings),
         data_dir: data_dir.clone(),
         ingest_port: Mutex::new(None),
         notified: Mutex::new(HashMap::new()),
-        tray_menu: Mutex::new(Vec::new()),
+        tray_menu: Mutex::new(tray::MenuKey::default()),
     });
 
     tray::create(app)?;
     if let Err(err) = hotkey::apply(app, &shortcut) {
         tracing::warn!(%err, "global shortcut not registered");
     }
-    publish(
-        app,
-        &engine,
-        Outcome {
-            changed: true,
-            alerts: Vec::new(),
-        },
-    );
+    publish(app, &engine, Outcome::changed());
 
     spawn_ingest(app.clone(), engine.clone(), data_dir);
     spawn_transcript_watcher(app.clone(), engine.clone());
@@ -214,8 +218,10 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
 fn spawn_ingest(app: AppHandle, engine: Arc<Engine>, data_dir: PathBuf) {
     tauri::async_runtime::spawn(async move {
         let (tx, mut rx) = mpsc::channel(1024);
+        let (decide_tx, decide_rx) = mpsc::channel(64);
+        spawn_decide_loop(app.clone(), engine.clone(), decide_rx);
         // Start listening before draining so nothing new lands in the spool meanwhile.
-        let _server = match IngestServer::start(&data_dir, tx).await {
+        let _server = match IngestServer::start(&data_dir, tx, decide_tx).await {
             Ok(server) => {
                 *app.state::<Runtime>()
                     .ingest_port
@@ -243,6 +249,39 @@ fn spawn_ingest(app: AppHandle, engine: Arc<Engine>, data_dir: PathBuf) {
         while let Some(raw) = rx.recv().await {
             let outcome = engine.ingest(&raw);
             publish(&app, &engine, outcome);
+        }
+    });
+}
+
+/// Applies permission prompts from `--decide` shims and holds them for the
+/// user's answer until the decide window runs out.
+fn spawn_decide_loop(app: AppHandle, engine: Arc<Engine>, mut rx: mpsc::Receiver<DecideRequest>) {
+    tauri::async_runtime::spawn(async move {
+        while let Some(DecideRequest { event, reply }) = rx.recv().await {
+            let outcome = engine.ingest(&event);
+            // Dropping `reply` (no approval came of it) lets the harness ask itself.
+            if let [approval_id] = outcome.requested.as_slice() {
+                let approval_id = approval_id.clone();
+                app.state::<decide::Decisions>()
+                    .register(approval_id.clone(), reply);
+                let window = app.state::<Runtime>().settings().decide_window();
+                let (app, engine) = (app.clone(), engine.clone());
+                tauri::async_runtime::spawn(async move {
+                    tokio::time::sleep(window).await;
+                    if app.state::<decide::Decisions>().release(&approval_id) {
+                        tracing::info!(%approval_id, "no answer in AgentScope; the harness asks");
+                        publish(&app, &engine, Outcome::changed());
+                    }
+                });
+            }
+            publish(
+                &app,
+                &engine,
+                Outcome {
+                    changed: true,
+                    ..outcome
+                },
+            );
         }
     });
 }
@@ -351,6 +390,17 @@ fn spawn_sweeper(app: AppHandle, engine: Arc<Engine>) {
     });
 }
 
+pub(crate) fn publish_outcome(app: &AppHandle, engine: &Engine, outcome: Outcome) {
+    publish(app, engine, outcome);
+}
+
+/// Refreshes the UI after something outside the graph changed, e.g. which
+/// prompts can be answered here.
+pub(crate) fn publish_changed(app: &AppHandle) {
+    let engine = app.state::<Arc<Engine>>().inner().clone();
+    publish(app, &engine, Outcome::changed());
+}
+
 /// Pushes a change to the UI and tray, and notifies about new alerts.
 fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
     if !outcome.alerts.is_empty() {
@@ -360,9 +410,15 @@ fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
         return;
     }
     let snapshot = engine.snapshot();
+    let open = snapshot.approvals.iter().map(|a| a.id.clone()).collect();
+    let decisions = app.state::<decide::Decisions>();
+    decisions.retain_open(&open);
+    let answerable = decisions.ids();
     let waiting_count = snapshot.waiting_count;
     let runtime = app.state::<Runtime>();
-    let key = tray::menu_key(&snapshot);
+    let settings = runtime.settings();
+    popup::sync(app, &answerable, settings.popup_approvals);
+    let key = tray::menu_key(&snapshot, &answerable, settings.confirm_risky);
     let menu_changed = {
         let mut last = runtime.tray_menu.lock().unwrap_or_else(|e| e.into_inner());
         let changed = *last != key;
@@ -382,11 +438,17 @@ fn notify_user(app: &AppHandle, alerts: Vec<Alert>) {
     let now = Instant::now();
     notified.retain(|_, (_, at)| now.duration_since(*at) < NOTIFY_DEBOUNCE);
     for alert in alerts {
-        let wanted = match alert.state {
-            AgentState::WaitingApproval | AgentState::MaybeWaiting => settings.notify_approvals,
-            _ => settings.notify_input,
+        let approval = matches!(
+            alert.state,
+            AgentState::WaitingApproval | AgentState::MaybeWaiting
+        );
+        let desktop = if approval {
+            settings.notify_approvals
+        } else {
+            settings.notify_input
         };
-        if !wanted
+        let phone = settings.push.wants(approval);
+        if !(desktop || phone)
             || notified
                 .get(&alert.session_id)
                 .is_some_and(|(state, _)| *state == alert.state)
@@ -394,6 +456,15 @@ fn notify_user(app: &AppHandle, alerts: Vec<Alert>) {
             continue;
         }
         notified.insert(alert.session_id.clone(), (alert.state, now));
+        if phone {
+            push::spawn_send(
+                settings.push.clone(),
+                push::PushMessage::new(&settings.push, &alert.title, &alert.body, approval),
+            );
+        }
+        if !desktop {
+            continue;
+        }
         if let Err(err) = app
             .notification()
             .builder()

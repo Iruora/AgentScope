@@ -21,6 +21,31 @@ pub struct Settings {
     /// Global shortcut that jumps to the agent waiting longest, e.g.
     /// `CommandOrControl+Shift+Y`. Empty when off.
     pub global_shortcut: String,
+    /// How long a permission prompt waits for an answer in AgentScope before
+    /// Claude Code asks in the terminal instead.
+    pub decide_window_secs: u32,
+    /// Ask for a second click before approving a command that looks risky.
+    pub confirm_risky: bool,
+    /// Pop up a small always-on-top window when a prompt can be answered here.
+    pub popup_approvals: bool,
+    /// Phone push, off by default.
+    pub push: crate::push::PushSettings,
+}
+
+/// The decide windows Settings offers, in seconds.
+pub const DECIDE_WINDOWS: &[u32] = &[15, 30, 60, 120];
+pub const DEFAULT_DECIDE_WINDOW: u32 = 60;
+
+impl Settings {
+    /// The decide window, falling back to the default for values Settings does not offer.
+    pub fn decide_window(&self) -> std::time::Duration {
+        let secs = if DECIDE_WINDOWS.contains(&self.decide_window_secs) {
+            self.decide_window_secs
+        } else {
+            DEFAULT_DECIDE_WINDOW
+        };
+        std::time::Duration::from_secs(secs.into())
+    }
 }
 
 impl Default for Settings {
@@ -32,6 +57,10 @@ impl Default for Settings {
             onboarded: false,
             check_updates: true,
             global_shortcut: String::new(),
+            decide_window_secs: DEFAULT_DECIDE_WINDOW,
+            confirm_risky: true,
+            popup_approvals: true,
+            push: crate::push::PushSettings::default(),
         }
     }
 }
@@ -77,8 +106,22 @@ mod tests {
             onboarded: true,
             check_updates: false,
             global_shortcut: "CommandOrControl+Shift+Y".into(),
+            decide_window_secs: 30,
+            confirm_risky: false,
+            popup_approvals: false,
+            push: crate::push::PushSettings {
+                service: crate::push::PushService::Ntfy,
+                target: "my-topic".into(),
+                ..Default::default()
+            },
         };
         save(dir.path(), &off).unwrap();
         assert_eq!(load(dir.path()), off);
+        assert_eq!(off.decide_window().as_secs(), 30);
+        let odd = Settings {
+            decide_window_secs: 7,
+            ..Settings::default()
+        };
+        assert_eq!(odd.decide_window().as_secs(), 60);
     }
 }

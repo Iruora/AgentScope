@@ -1,6 +1,11 @@
 See every local AI coding agent, its subagents, and which ones are waiting for your approval. Works with Claude Code, Codex, Copilot CLI and Cursor.
 
-**What's new in 1.2**
+**What's new in 1.3**
+
+- **Approve or deny from AgentScope.** Turn it on for Claude Code in Settings → Integrations, then answer permission prompts from the Approvals inbox, the tray menu, or a small popup. Anything you don't answer goes back to the terminal.
+- **Phone push.** Settings → Phone push sends alerts through ntfy, Pushover, Discord, Slack or Telegram. Off by default.
+
+**Also new since 1.0**
 
 - **Updates in place.** AgentScope now updates itself from GitHub Releases. Coming from 1.0, install this version once by hand; later ones arrive inside the app.
 - **Command palette.** Press Ctrl+K (⌘K on a Mac) to jump to any session, view or action. Ctrl/⌘+Enter goes straight to the agent.

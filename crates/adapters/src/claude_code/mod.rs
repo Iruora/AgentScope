@@ -74,6 +74,15 @@ impl Adapter for ClaudeCode {
         install::uninstall(&self.settings_path()?, dry_run)
     }
 
+    fn can_answer_approvals(&self) -> bool {
+        true
+    }
+
+    fn answers_approvals(&self) -> bool {
+        self.settings_path()
+            .is_ok_and(|path| install::answers(&path))
+    }
+
     fn normalize_hook(&self, raw: &RawHookEvent) -> Vec<AgentEvent> {
         hooks::normalize(raw)
     }

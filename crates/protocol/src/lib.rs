@@ -14,6 +14,14 @@ pub const PROTOCOL_VERSION: u32 = 1;
 /// HTTP path the shim posts wrapped events to.
 pub const INGEST_PATH: &str = "/v1/hook";
 
+/// HTTP path the shim posts a permission prompt to when it waits for the
+/// user's answer from AgentScope (`--decide`). The reply is a [`DecideReply`].
+pub const DECIDE_PATH: &str = "/v1/decide";
+
+/// The longest the app may hold a `--decide` request. The user's chosen
+/// window is shorter; this is the shim's own cap in case the app hangs.
+pub const DECIDE_MAX_WAIT_SECS: u64 = 130;
+
 /// Header carrying the per-launch token from `ingest.json`.
 pub const TOKEN_HEADER: &str = "x-agentscope-token";
 
@@ -99,6 +107,21 @@ pub struct RawHookEvent {
     pub payload: serde_json::Value,
 }
 
+/// The user's answer to a permission prompt, given in AgentScope.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "behavior", rename_all = "lowercase")]
+pub enum Decision {
+    Allow,
+    Deny { message: String },
+}
+
+/// The app's reply on [`DECIDE_PATH`]. `None` means "no answer here": the
+/// harness should ask in its own prompt, as if AgentScope were not there.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct DecideReply {
+    pub decision: Option<Decision>,
+}
+
 /// Written by the app to `<data dir>/ingest.json` on every start.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IngestInfo {
@@ -145,6 +168,23 @@ mod tests {
             assert_eq!(json, format!("\"{}\"", h.as_str()));
         }
         assert!("claude".parse::<HarnessId>().is_err());
+    }
+
+    #[test]
+    fn decisions_use_the_claude_code_shape() {
+        let deny = Decision::Deny {
+            message: "No".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(&deny).unwrap(),
+            serde_json::json!({ "behavior": "deny", "message": "No" })
+        );
+        assert_eq!(
+            serde_json::to_value(Decision::Allow).unwrap(),
+            serde_json::json!({ "behavior": "allow" })
+        );
+        let none: DecideReply = serde_json::from_str(r#"{"decision":null}"#).unwrap();
+        assert_eq!(none.decision, None);
     }
 
     #[test]

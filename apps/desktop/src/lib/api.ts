@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { commands, events } from "../bindings";
-import type { HarnessId, Settings, UpdateInfo } from "./types";
+import type { HarnessId, PushSettings, Settings, UpdateInfo } from "./types";
 
 const snapshotKey = ["snapshot"] as const;
+const answerableKey = ["answerable"] as const;
 
 /** Unwraps a command result, turning its error into a thrown `Error`. */
 async function unwrap<T>(
@@ -22,6 +23,7 @@ export function useGraphUpdates() {
     const unlisten = events.graphChanged.listen(() => {
       void queryClient.invalidateQueries({ queryKey: snapshotKey });
       void queryClient.invalidateQueries({ queryKey: ["sessionEvents"] });
+      void queryClient.invalidateQueries({ queryKey: answerableKey });
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -53,8 +55,8 @@ export function useIntegrations() {
 export function useSetHooks() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (args: { harness: HarnessId; connect: boolean; dryRun: boolean }) =>
-      unwrap(commands.setHooks(args.harness, args.connect, args.dryRun)),
+    mutationFn: (args: { harness: HarnessId; connect: boolean; dryRun: boolean; answerApprovals?: boolean }) =>
+      unwrap(commands.setHooks(args.harness, args.connect, args.dryRun, args.answerApprovals ?? false)),
     onSuccess: (_diff, args) => {
       if (!args.dryRun) void queryClient.invalidateQueries({ queryKey: ["integrations"] });
     },
@@ -148,4 +150,43 @@ export function useCopyDebugReport() {
 
 export function useOpenNewIssue() {
   return useMutation({ mutationFn: () => unwrap(commands.openNewIssue()) });
+}
+
+/** Ids of the approvals that can be answered in AgentScope right now. */
+export function useAnswerable() {
+  return useQuery({ queryKey: answerableKey, queryFn: () => commands.getAnswerable() });
+}
+
+/** Approves or denies a waiting prompt. */
+export function useAnswerApproval() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (args: { approvalId: string; allow: boolean }) =>
+      unwrap(commands.answerApproval(args.approvalId, args.allow)),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: answerableKey }),
+  });
+}
+
+/** Hands a waiting prompt back to the agent's own terminal. */
+export function useReleaseApproval() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (approvalId: string) => commands.releaseApproval(approvalId),
+    onSettled: () => void queryClient.invalidateQueries({ queryKey: answerableKey }),
+  });
+}
+
+/** Shows the main window on a session. */
+export function showSession(sessionId: string) {
+  return commands.showSession(sessionId);
+}
+
+/** Closes the approval popup until a new prompt arrives. */
+export function closePopup() {
+  return commands.closePopup();
+}
+
+/** Sends a test push with settings that are not saved yet. */
+export function useTestPush() {
+  return useMutation({ mutationFn: (push: PushSettings) => unwrap(commands.testPush(push)) });
 }

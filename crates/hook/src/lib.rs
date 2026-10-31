@@ -12,8 +12,9 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use agentscope_protocol::{
-    ingest_info_path, now_ms, spool_dir, HarnessId, IngestInfo, RawHookEvent, INGEST_PATH,
-    MAX_PAYLOAD_BYTES, PROTOCOL_VERSION, SPOOL_MAX_BYTES, TOKEN_HEADER,
+    ingest_info_path, now_ms, spool_dir, DecideReply, Decision, HarnessId, IngestInfo,
+    RawHookEvent, DECIDE_MAX_WAIT_SECS, DECIDE_PATH, INGEST_PATH, MAX_PAYLOAD_BYTES,
+    PROTOCOL_VERSION, SPOOL_MAX_BYTES, TOKEN_HEADER,
 };
 
 /// Total time the shim may spend delivering an event.
@@ -23,16 +24,21 @@ pub const BUDGET: Duration = Duration::from_millis(300);
 pub struct Args {
     pub harness: HarnessId,
     pub event: String,
+    /// Wait for the user's answer from AgentScope and print it for the
+    /// harness (opt-in approvals). Without it the shim never writes to stdout.
+    pub decide: bool,
 }
 
 pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String> {
     let mut harness = None;
     let mut event = None;
+    let mut decide = false;
     let mut it = args.into_iter();
     while let Some(arg) = it.next() {
         match arg.as_str() {
             "--harness" => harness = it.next(),
             "--event" => event = it.next(),
+            "--decide" => decide = true,
             other => return Err(format!("unexpected argument `{other}`")),
         }
     }
@@ -41,7 +47,11 @@ pub fn parse_args(args: impl IntoIterator<Item = String>) -> Result<Args, String
         .parse::<HarnessId>()
         .map_err(|e| e.to_string())?;
     let event = event.filter(|e| !e.is_empty()).ok_or("missing --event")?;
-    Ok(Args { harness, event })
+    Ok(Args {
+        harness,
+        event,
+        decide,
+    })
 }
 
 /// Reads at most [`MAX_PAYLOAD_BYTES`] from `input`. Invalid JSON is kept as a string.
@@ -54,11 +64,11 @@ pub fn read_payload(input: impl Read) -> serde_json::Value {
     }
 }
 
-pub fn wrap(args: Args, payload: serde_json::Value) -> RawHookEvent {
+pub fn wrap(args: &Args, payload: serde_json::Value) -> RawHookEvent {
     RawHookEvent {
         v: PROTOCOL_VERSION,
         harness: args.harness,
-        event: args.event,
+        event: args.event.clone(),
         received_at: now_ms(),
         pid: Some(std::process::id()),
         ppid: parent_pid(),
@@ -157,6 +167,67 @@ fn send(data_dir: &Path, body: &[u8], deadline: Instant) -> io::Result<()> {
     }
 }
 
+/// Sends a permission prompt to the app and waits for the user's answer.
+/// `Ok(None)` means the app saw it but has no answer (timeout, answered in
+/// the terminal, or approvals turned off); `Err` means the app was not reached.
+pub fn decide(
+    data_dir: &Path,
+    event: &RawHookEvent,
+    connect_budget: Duration,
+) -> io::Result<Option<Decision>> {
+    let body = serde_json::to_vec(event).map_err(io::Error::other)?;
+    let info: IngestInfo = serde_json::from_slice(&fs::read(ingest_info_path(data_dir))?)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let addr = SocketAddr::from((Ipv4Addr::LOCALHOST, info.port));
+    let mut stream = TcpStream::connect_timeout(&addr, connect_budget)?;
+    stream.set_nodelay(true)?;
+    stream.set_write_timeout(Some(connect_budget))?;
+    let head = format!(
+        "POST {DECIDE_PATH} HTTP/1.1\r\nHost: 127.0.0.1:{}\r\n{TOKEN_HEADER}: {}\r\n\
+         Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        info.port,
+        info.token,
+        body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(&body)?;
+    stream.flush()?;
+
+    stream.set_read_timeout(Some(Duration::from_secs(DECIDE_MAX_WAIT_SECS)))?;
+    let mut response = Vec::new();
+    stream.take(64 * 1024).read_to_end(&mut response)?;
+    parse_decide_response(&response)
+}
+
+fn parse_decide_response(response: &[u8]) -> io::Result<Option<Decision>> {
+    let split = response
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .ok_or_else(|| io::Error::from(io::ErrorKind::UnexpectedEof))?;
+    let (head, body) = (&response[..split], &response[split + 4..]);
+    if !(head.starts_with(b"HTTP/1.") && head.get(9) == Some(&b'2')) {
+        return Err(io::Error::other("the app rejected the prompt"));
+    }
+    let reply: DecideReply = serde_json::from_slice(body).map_err(io::Error::other)?;
+    Ok(reply.decision)
+}
+
+/// What to print for the harness. Only Claude Code takes answers so far.
+pub fn render_decision(harness: HarnessId, event: &str, decision: &Decision) -> Option<String> {
+    match harness {
+        HarnessId::ClaudeCode if event == "PermissionRequest" => Some(
+            serde_json::json!({
+                "hookSpecificOutput": {
+                    "hookEventName": "PermissionRequest",
+                    "decision": decision,
+                }
+            })
+            .to_string(),
+        ),
+        _ => None,
+    }
+}
+
 fn remaining(deadline: Instant) -> io::Result<Duration> {
     deadline
         .checked_duration_since(Instant::now())
@@ -187,6 +258,51 @@ pub fn spool(data_dir: &Path, line: &[u8]) -> io::Result<()> {
         .write_all(&record)
 }
 
+/// Everything `main` does after the `--version` check, with the process's
+/// streams passed in so tests can run it in-process. Never fails: the
+/// harness must not be blocked by AgentScope.
+pub fn run(
+    raw_args: Vec<String>,
+    stdin: impl std::io::Read,
+    stdout: &mut impl std::io::Write,
+    data_dir: Option<std::path::PathBuf>,
+) {
+    let deadline = std::time::Instant::now() + BUDGET;
+    let args = match parse_args(raw_args) {
+        Ok(args) => args,
+        Err(err) => {
+            eprintln!("agentscope-hook: {err}");
+            eprintln!("usage: agentscope-hook --harness <claude-code|codex|copilot-cli|cursor> --event <name> [--decide]");
+            return;
+        }
+    };
+    let payload = read_payload(stdin);
+    let Some(data_dir) = data_dir else {
+        return;
+    };
+    let event = wrap(&args, payload);
+    if !args.decide {
+        deliver(&data_dir, &event, deadline);
+        return;
+    }
+    match decide(&data_dir, &event, BUDGET) {
+        Ok(Some(decision)) => {
+            if let Some(out) = render_decision(args.harness, &args.event, &decision) {
+                let _ = writeln!(stdout, "{out}");
+                let _ = stdout.flush();
+            }
+        }
+        // The harness shows its own prompt, as without AgentScope.
+        Ok(None) => {}
+        // The app is not running: keep the event for later, answer nothing.
+        Err(_) => {
+            if let Ok(line) = serde_json::to_vec(&event) {
+                let _ = spool(&data_dir, &line);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,9 +320,19 @@ mod tests {
             parsed.unwrap(),
             Args {
                 harness: HarnessId::ClaudeCode,
-                event: "PreToolUse".into()
+                event: "PreToolUse".into(),
+                decide: false,
             }
         );
+        let decide = parse_args(args(&[
+            "--harness",
+            "claude-code",
+            "--event",
+            "PermissionRequest",
+            "--decide",
+        ]))
+        .unwrap();
+        assert!(decide.decide);
         assert!(parse_args(args(&["--harness", "nope", "--event", "x"])).is_err());
         assert!(parse_args(args(&["--harness", "codex"])).is_err());
         assert!(parse_args(args(&["--verbose"])).is_err());
@@ -226,9 +352,10 @@ mod tests {
 
     fn event() -> RawHookEvent {
         wrap(
-            Args {
+            &Args {
                 harness: HarnessId::Codex,
                 event: "Stop".into(),
+                decide: false,
             },
             serde_json::json!({ "session_id": "s1" }),
         )
@@ -299,5 +426,39 @@ mod tests {
         assert!(head.starts_with("POST /v1/hook HTTP/1.1"));
         assert!(head.contains("x-agentscope-token: t0ken"));
         assert!(!spool_dir(dir.path()).exists());
+    }
+
+    #[test]
+    fn renders_claude_code_decisions_only() {
+        let deny = Decision::Deny {
+            message: "Denied in AgentScope".into(),
+        };
+        let out = render_decision(HarnessId::ClaudeCode, "PermissionRequest", &deny).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&out).unwrap(),
+            serde_json::json!({ "hookSpecificOutput": {
+                "hookEventName": "PermissionRequest",
+                "decision": { "behavior": "deny", "message": "Denied in AgentScope" }
+            }})
+        );
+        assert!(render_decision(HarnessId::ClaudeCode, "PreToolUse", &deny).is_none());
+        assert!(render_decision(HarnessId::Codex, "PermissionRequest", &deny).is_none());
+    }
+
+    #[test]
+    fn parses_decide_responses() {
+        let ok = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n{\"decision\":{\"behavior\":\"allow\"}}";
+        assert_eq!(parse_decide_response(ok).unwrap(), Some(Decision::Allow));
+        let none = b"HTTP/1.1 200 OK\r\n\r\n{\"decision\":null}";
+        assert_eq!(parse_decide_response(none).unwrap(), None);
+        assert!(parse_decide_response(b"HTTP/1.1 401 Unauthorized\r\n\r\n").is_err());
+        assert!(parse_decide_response(b"HTTP/1.1 200 OK\r\n").is_err());
+    }
+
+    #[test]
+    fn decide_fails_fast_without_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let ev = event();
+        assert!(decide(dir.path(), &ev, BUDGET).is_err());
     }
 }

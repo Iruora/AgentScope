@@ -13,7 +13,7 @@ use agentscope_core::store::{Duration, StoreError};
 use agentscope_core::tail::Tailer;
 use agentscope_core::{
     AgentEvent, AgentState, Changes, EventKind, EventSource, Graph, HarnessId, RawHookEvent,
-    Session, Snapshot, Store,
+    Resolution, Session, Snapshot, Store,
 };
 use chrono::{DateTime, Utc};
 
@@ -78,12 +78,22 @@ pub struct Alert {
 pub struct Outcome {
     pub changed: bool,
     pub alerts: Vec<Alert>,
+    /// Ids of approvals these events opened.
+    pub requested: Vec<String>,
 }
 
 impl Outcome {
     pub fn merge(&mut self, other: Outcome) {
         self.changed |= other.changed;
         self.alerts.extend(other.alerts);
+        self.requested.extend(other.requested);
+    }
+
+    pub fn changed() -> Self {
+        Self {
+            changed: true,
+            ..Self::default()
+        }
     }
 }
 
@@ -187,6 +197,7 @@ impl Engine {
         shim: &Path,
         connect: bool,
         dry_run: bool,
+        answer_approvals: bool,
     ) -> agentscope_adapters::Result<Diff> {
         let adapter = self
             .adapter(id)
@@ -197,6 +208,7 @@ impl Engine {
             adapter.install_hooks(&HookPlan {
                 shim_path: shim.to_owned(),
                 dry_run,
+                answer_approvals: answer_approvals && adapter.can_answer_approvals(),
             })
         } else {
             adapter.uninstall_hooks(dry_run)
@@ -478,6 +490,7 @@ impl Engine {
         let mut inner = self.lock();
         let Inner { graph, store, .. } = &mut *inner;
         let mut changes = Changes::default();
+        let mut requested = Vec::new();
         let mut before: HashMap<String, AgentState> = HashMap::new();
         let mut live: HashSet<String> = HashSet::new();
         for ev in events {
@@ -488,6 +501,9 @@ impl Engine {
             let applied = graph.apply(ev);
             if applied.is_empty() {
                 continue;
+            }
+            if let EventKind::ApprovalRequested { approval_id, .. } = &ev.kind {
+                requested.push(format!("{id}#{approval_id}"));
             }
             if ev.source == EventSource::Hook || (now - ev.at).num_seconds() < LIVE_WINDOW_SECONDS {
                 live.insert(id);
@@ -520,7 +536,45 @@ impl Engine {
         Outcome {
             changed: !changes.is_empty(),
             alerts,
+            requested,
         }
+    }
+
+    /// Marks an approval answered from AgentScope, without waiting for the
+    /// harness to report back.
+    pub fn resolve_approval(&self, approval_id: &str, resolution: Resolution) -> Outcome {
+        let Some(approval) = self
+            .snapshot()
+            .approvals
+            .into_iter()
+            .find(|a| a.id == approval_id)
+        else {
+            return Outcome::default();
+        };
+        let Some(session) = self.session(&approval.session_id) else {
+            return Outcome::default();
+        };
+        let native_approval = approval_id
+            .split_once('#')
+            .map(|(_, native)| native.to_owned());
+        let agent = approval
+            .agent_id
+            .rsplit_once('/')
+            .map(|(_, native)| native)
+            .filter(|native| *native != "main")
+            .map(str::to_owned);
+        self.apply(&[AgentEvent {
+            source: EventSource::Hook,
+            at: Utc::now(),
+            harness: session.harness,
+            session: session.native_id,
+            agent,
+            dedupe_key: None,
+            kind: EventKind::ApprovalResolved {
+                approval_id: native_approval,
+                resolution,
+            },
+        }])
     }
 
     /// Per-harness signal counters since the app started.
@@ -627,6 +681,21 @@ mod tests {
             ppid: Some(u32::MAX - 7),
             payload: serde_json::from_slice(&payload).unwrap(),
         }
+    }
+
+    #[test]
+    fn approvals_report_their_id_and_resolve_from_the_app() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine(dir.path(), &dir.path().join("db"));
+        let outcome = engine.ingest(&hook("PermissionRequest"));
+        assert_eq!(outcome.requested.len(), 1);
+        let id = outcome.requested[0].clone();
+        assert!(engine.snapshot().approvals.iter().any(|a| a.id == id));
+
+        let resolved = engine.resolve_approval(&id, Resolution::Approved);
+        assert!(resolved.changed);
+        assert!(engine.snapshot().approvals.is_empty());
+        assert!(!engine.resolve_approval(&id, Resolution::Approved).changed);
     }
 
     #[test]

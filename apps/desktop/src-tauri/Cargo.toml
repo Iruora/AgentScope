@@ -19,6 +19,9 @@ agentscope-core.workspace = true
 agentscope-protocol.workspace = true
 chrono.workspace = true
 notify = "8"
+regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["json", "form"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 serde.workspace = true
 serde_json.workspace = true
 specta.workspace = true

@@ -14,8 +14,10 @@ export const commands = {
 	/**
 	 *  Connects (`connect: true`) or disconnects a harness. With `dry_run` the
 	 *  config is left alone and only the diff is returned, for the preview.
+	 *  `answer_approvals` installs the hook that lets AgentScope answer
+	 *  permission prompts, where the harness supports it.
 	 */
-	setHooks: (harness: HarnessId, connect: boolean, dryRun: boolean) => typedError<Diff_Serialize, string>(__TAURI_INVOKE("set_hooks", { harness, connect, dryRun })),
+	setHooks: (harness: HarnessId, connect: boolean, dryRun: boolean, answerApprovals: boolean) => typedError<Diff_Serialize, string>(__TAURI_INVOKE("set_hooks", { harness, connect, dryRun, answerApprovals })),
 	goToAgent: (sessionId: string) => typedError<GoToAgent_Serialize, string>(__TAURI_INVOKE("go_to_agent", { sessionId })),
 	revealTranscript: (sessionId: string) => typedError<null, string>(__TAURI_INVOKE("reveal_transcript", { sessionId })),
 	getSettings: () => __TAURI_INVOKE<Settings_Serialize>("get_settings"),
@@ -30,6 +32,18 @@ export const commands = {
 	/**  Puts the redacted plain-text debug report on the clipboard and returns it. */
 	copyDebugReport: () => typedError<string, string>(__TAURI_INVOKE("copy_debug_report")),
 	openNewIssue: () => typedError<null, string>(__TAURI_INVOKE("open_new_issue")),
+	/**  Approvals waiting for an answer in AgentScope right now. */
+	getAnswerable: () => __TAURI_INVOKE<string[]>("get_answerable"),
+	/**  Answers a waiting permission prompt. The agent goes on (or stops) at once. */
+	answerApproval: (approvalId: string, allow: boolean) => typedError<null, string>(__TAURI_INVOKE("answer_approval", { approvalId, allow })),
+	/**  Hands a waiting prompt back to the harness, which then asks in the terminal. */
+	releaseApproval: (approvalId: string) => __TAURI_INVOKE<void>("release_approval", { approvalId }),
+	/**  Shows the main window on a session, e.g. from the approval popup. */
+	showSession: (sessionId: string) => __TAURI_INVOKE<void>("show_session", { sessionId }),
+	/**  Closes the approval popup until a new prompt arrives. */
+	closePopup: () => __TAURI_INVOKE<void>("close_popup"),
+	/**  Sends a test message with the given push settings, before saving them. */
+	testPush: (push: PushSettings_Deserialize) => typedError<null, string>(__TAURI_INVOKE("test_push", { push })),
 };
 
 /** Events */
@@ -351,11 +365,19 @@ export type Integration = Integration_Serialize | Integration_Deserialize;
 export type Integration_Deserialize = {
 	detection: Detection_Deserialize,
 	hookStatus: HookStatus,
+	/**  The harness takes answers to permission prompts from a hook. */
+	canAnswer: boolean,
+	/**  The installed hooks let AgentScope answer its permission prompts. */
+	answers: boolean,
 };
 
 export type Integration_Serialize = {
 	detection: Detection_Serialize,
 	hookStatus: HookStatus,
+	/**  The harness takes answers to permission prompts from a hook. */
+	canAnswer: boolean,
+	/**  The installed hooks let AgentScope answer its permission prompts. */
+	answers: boolean,
 };
 
 export type Integrations = Integrations_Serialize | Integrations_Deserialize;
@@ -409,6 +431,34 @@ export type PendingApproval_Serialize = {
 	confidence: Confidence,
 	resolvedAt: string | null,
 	resolution: Resolution | null,
+};
+
+export type PushService = "off" | "ntfy" | "pushover" | "discord" | "slack" | "telegram";
+
+export type PushSettings = PushSettings_Serialize | PushSettings_Deserialize;
+
+export type PushSettings_Deserialize = {
+	service?: PushService,
+	/**  ntfy topic or topic URL, Pushover user key, webhook URL, or Telegram chat id. */
+	target?: string,
+	/**  Pushover app token, Telegram bot token, or an optional ntfy access token. */
+	token?: string,
+	/**  Include the agent's name and the command. Off sends only that an agent is waiting. */
+	includeDetails?: boolean,
+	/**  Also push when an agent waits for input, not only for approvals. */
+	includeInput?: boolean,
+};
+
+export type PushSettings_Serialize = {
+	service: PushService,
+	/**  ntfy topic or topic URL, Pushover user key, webhook URL, or Telegram chat id. */
+	target: string,
+	/**  Pushover app token, Telegram bot token, or an optional ntfy access token. */
+	token: string,
+	/**  Include the agent's name and the command. Off sends only that an agent is waiting. */
+	includeDetails: boolean,
+	/**  Also push when an agent waits for input, not only for approvals. */
+	includeInput: boolean,
 };
 
 export type Repo = Repo_Serialize | Repo_Deserialize;
@@ -485,6 +535,17 @@ export type Settings_Deserialize = {
 	 *  `CommandOrControl+Shift+Y`. Empty when off.
 	 */
 	globalShortcut?: string,
+	/**
+	 *  How long a permission prompt waits for an answer in AgentScope before
+	 *  Claude Code asks in the terminal instead.
+	 */
+	decideWindowSecs?: number,
+	/**  Ask for a second click before approving a command that looks risky. */
+	confirmRisky?: boolean,
+	/**  Pop up a small always-on-top window when a prompt can be answered here. */
+	popupApprovals?: boolean,
+	/**  Phone push, off by default. */
+	push?: PushSettings_Deserialize,
 };
 
 export type Settings_Serialize = {
@@ -503,6 +564,17 @@ export type Settings_Serialize = {
 	 *  `CommandOrControl+Shift+Y`. Empty when off.
 	 */
 	globalShortcut: string,
+	/**
+	 *  How long a permission prompt waits for an answer in AgentScope before
+	 *  Claude Code asks in the terminal instead.
+	 */
+	decideWindowSecs: number,
+	/**  Ask for a second click before approving a command that looks risky. */
+	confirmRisky: boolean,
+	/**  Pop up a small always-on-top window when a prompt can be answered here. */
+	popupApprovals: boolean,
+	/**  Phone push, off by default. */
+	push: PushSettings_Serialize,
 };
 
 /**  What the UI renders. */

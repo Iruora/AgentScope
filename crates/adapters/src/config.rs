@@ -16,6 +16,9 @@ use crate::{AdapterError, Diff, HookStatus, Result};
 pub(crate) const SHIM_STEM: &str = "agentscope-hook";
 const BACKUP_SUFFIX: &str = "agentscope-backup";
 
+/// Builds the decide handler for an event, or `None` where the harness takes no answer.
+pub(crate) type DecideEntry<'a> = &'a dyn Fn(&Path, &str) -> Option<Value>;
+
 /// One harness's hook file layout.
 pub(crate) struct HookConfig<'a> {
     pub events: &'a [&'a str],
@@ -25,6 +28,23 @@ pub(crate) struct HookConfig<'a> {
     pub grouped: bool,
     /// Top-level keys the file needs, added when missing (Cursor's `version`).
     pub required: &'a [(&'a str, i64)],
+    /// The handler that waits for the user's answer from AgentScope, for the
+    /// events where the harness accepts one. Used instead of `entry` when
+    /// answering approvals is turned on.
+    pub decide_entry: Option<DecideEntry<'a>>,
+}
+
+/// Whether a handler of ours runs the shim in `--decide` mode.
+fn is_decide(hook: &Value) -> bool {
+    let in_args = hook
+        .get("args")
+        .and_then(Value::as_array)
+        .is_some_and(|a| a.iter().any(|v| v == "--decide"));
+    let in_command = hook
+        .get("command")
+        .and_then(Value::as_str)
+        .is_some_and(|c| c.split_whitespace().any(|w| w == "--decide"));
+    in_args || in_command
 }
 
 /// Whether `command` runs the shim: a path or shell line whose program is
@@ -70,6 +90,28 @@ pub(crate) fn read(path: &Path) -> Result<Option<(String, Map<String, Value>)>> 
 }
 
 impl HookConfig<'_> {
+    /// The handler for `event`: the deciding one when `answer` is on and the
+    /// event supports it.
+    fn entry_for(&self, shim: &Path, event: &str, answer: bool) -> Value {
+        answer
+            .then(|| self.decide_entry.and_then(|f| f(shim, event)))
+            .flatten()
+            .unwrap_or_else(|| (self.entry)(shim, event))
+    }
+
+    /// Whether the installed hooks answer approvals from AgentScope.
+    pub fn answers(&self, path: &Path) -> bool {
+        let Ok(Some((_, settings))) = read(path) else {
+            return false;
+        };
+        let Some(hooks) = settings.get("hooks").and_then(Value::as_object) else {
+            return false;
+        };
+        hooks
+            .keys()
+            .any(|event| self.ours(hooks, event).iter().any(|(_, h)| is_decide(h)))
+    }
+
     /// Our handlers registered for `event`, with their group index.
     pub fn ours<'v>(&self, hooks: &'v Map<String, Value>, event: &str) -> Vec<(usize, &'v Value)> {
         let list = hooks.get(event).and_then(Value::as_array);
@@ -107,7 +149,9 @@ impl HookConfig<'_> {
                 .into_iter()
                 .map(|(_, h)| h)
                 .collect();
-            ours == [&(self.entry)(shim, event)]
+            [false, true]
+                .iter()
+                .any(|&answer| ours == [&self.entry_for(shim, event, answer)])
         });
         match (any_ours, current) {
             (false, _) => HookStatus::NotInstalled,
@@ -139,7 +183,7 @@ impl HookConfig<'_> {
         });
     }
 
-    pub fn install(&self, path: &Path, shim: &Path, dry_run: bool) -> Result<Diff> {
+    pub fn install(&self, path: &Path, shim: &Path, dry_run: bool, answer: bool) -> Result<Diff> {
         let (before, mut settings) = match read(path)? {
             Some((text, map)) => (Some(text), map),
             None => (None, Map::new()),
@@ -164,7 +208,7 @@ impl HookConfig<'_> {
                 .or_insert_with(|| Value::Array(Vec::new()))
                 .as_array_mut()
                 .ok_or_else(|| invalid(format!("`hooks.{event}` is not a list")))?;
-            let entry = (self.entry)(shim, event);
+            let entry = self.entry_for(shim, event, answer);
             list.push(if self.grouped {
                 serde_json::json!({ "hooks": [entry] })
             } else {

@@ -41,6 +41,7 @@ const CONFIG: HookConfig<'static> = HookConfig {
     entry: &hook_entry,
     grouped: false,
     required: &[("version", 1)],
+    decide_entry: None,
 };
 
 pub fn status(path: &Path, shim: &Path) -> HookStatus {
@@ -48,7 +49,7 @@ pub fn status(path: &Path, shim: &Path) -> HookStatus {
 }
 
 pub fn install(path: &Path, plan: &HookPlan) -> Result<Diff> {
-    CONFIG.install(path, &plan.shim_path, plan.dry_run)
+    CONFIG.install(path, &plan.shim_path, plan.dry_run, false)
 }
 
 pub fn uninstall(path: &Path, dry_run: bool) -> Result<Diff> {
@@ -78,6 +79,7 @@ mod tests {
         let plan = HookPlan {
             shim_path: shim.clone(),
             dry_run: false,
+            answer_approvals: false,
         };
         install(&path, &plan).unwrap();
         assert_eq!(status(&path, &shim), HookStatus::Installed);
@@ -104,6 +106,7 @@ mod tests {
         let plan = HookPlan {
             shim_path: PathBuf::from("/x/agentscope-hook"),
             dry_run: false,
+            answer_approvals: false,
         };
         install(&path, &plan).unwrap();
         let written: Value = serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap();

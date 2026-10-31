@@ -1,9 +1,10 @@
-import { ChevronDown, CircleDashed, Clock, ShieldCheck, TerminalSquare } from "lucide-react";
+import { Check, ChevronDown, CircleDashed, Clock, ShieldCheck, SquareTerminal, TerminalSquare, TriangleAlert, X } from "lucide-react";
 import { useState } from "react";
 
 import { GoToAgentButton } from "../components/GoToAgentButton";
-import { Code, EmptyState, Notice, PageIntro, Pill, SectionTitle, cx } from "../components/ui";
-import { useSnapshot } from "../lib/api";
+import { Button, Code, EmptyState, Notice, PageIntro, Pill, SectionTitle, cx } from "../components/ui";
+import { useAnswerApproval, useAnswerable, useReleaseApproval, useSettings, useSnapshot } from "../lib/api";
+import { isRisky } from "../lib/risky";
 import { basename, elapsed, harnessNames } from "../lib/format";
 import type { PendingApproval, Session } from "../lib/types";
 import { useNow } from "../lib/useNow";
@@ -14,6 +15,8 @@ export function Approvals({ onOpen }: { onOpen: (sessionId: string) => void }) {
   const now = useNow();
   const approvals = snapshot.data?.approvals ?? [];
   const sessions = new Map((snapshot.data?.sessions ?? []).map((s) => [s.id, s]));
+  const answerable = new Set(useAnswerable().data ?? []);
+  const settings = useSettings().data;
 
   return (
     <div className="mx-auto flex max-w-[1180px] flex-col gap-5">
@@ -22,7 +25,9 @@ export function Approvals({ onOpen }: { onOpen: (sessionId: string) => void }) {
         subtitle="Every permission prompt waiting on you, oldest first."
       />
       <Notice tone="accent" icon={ShieldCheck}>
-        AgentScope only watches. Answer each prompt in the agent's own terminal; Go to agent takes you there.
+        {answerable.size > 0
+          ? "Prompts marked Answer here wait for you in AgentScope. Anything you don't answer goes back to the agent's terminal."
+          : "Answer each prompt in the agent's own terminal; Go to agent takes you there. To answer Claude Code prompts here, turn it on in Settings → Integrations."}
       </Notice>
 
       {snapshot.isSuccess && approvals.length === 0 && (
@@ -44,6 +49,9 @@ export function Approvals({ onOpen }: { onOpen: (sessionId: string) => void }) {
                 session={sessions.get(a.sessionId)}
                 now={now}
                 onOpen={onOpen}
+                answerable={answerable.has(a.id)}
+                windowSecs={settings?.decideWindowSecs ?? 60}
+                confirmRisky={settings?.confirmRisky ?? true}
               />
             ))}
           </ul>
@@ -58,13 +66,20 @@ function ApprovalRow({
   session,
   now,
   onOpen,
+  answerable,
+  windowSecs,
+  confirmRisky,
 }: {
   approval: PendingApproval;
   session?: Session;
   now: number;
   onOpen: (sessionId: string) => void;
+  answerable: boolean;
+  windowSecs: number;
+  confirmRisky: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const left = Math.max(0, Math.ceil(windowSecs - (now - Date.parse(approval.requestedAt)) / 1000));
   const where = session ? (session.repo?.root ?? session.cwd) : "";
 
   return (
@@ -80,6 +95,11 @@ function ApprovalRow({
         <Pill tone="warn" icon={Clock}>
           waiting {elapsed(approval.requestedAt, now)}
         </Pill>
+        {answerable && (
+          <Pill tone="accent" icon={ShieldCheck}>
+            Answer here · {left}s left
+          </Pill>
+        )}
         {approval.confidence === "inferred" && (
           <Pill tone="warn" icon={CircleDashed} dashed>
             inferred
@@ -103,7 +123,11 @@ function ApprovalRow({
             </p>
           </div>
         </div>
-        <GoToAgentButton sessionId={approval.sessionId} primary />
+        {answerable ? (
+          <AnswerButtons approvalId={approval.id} risky={confirmRisky && isRisky(approval.summary)} />
+        ) : (
+          <GoToAgentButton sessionId={approval.sessionId} primary />
+        )}
       </div>
 
       {approval.detail != null && (
@@ -126,5 +150,37 @@ function ApprovalRow({
         </div>
       )}
     </li>
+  );
+}
+
+export function AnswerButtons({ approvalId, risky }: { approvalId: string; risky: boolean }) {
+  const answer = useAnswerApproval();
+  const release = useReleaseApproval();
+  const [confirming, setConfirming] = useState(false);
+  const busy = answer.isPending || release.isPending;
+  const approve = () => {
+    if (risky && !confirming) {
+      setConfirming(true);
+      return;
+    }
+    answer.mutate({ approvalId, allow: true });
+  };
+
+  return (
+    <span className="flex flex-col items-end gap-1.5">
+      <span className="flex flex-wrap justify-end gap-2">
+        <Button size="sm" icon={SquareTerminal} disabled={busy} onClick={() => release.mutate(approvalId)} title="Hand this prompt back to the agent's terminal now">
+          Ask in terminal
+        </Button>
+        <Button size="sm" icon={X} disabled={busy} onClick={() => answer.mutate({ approvalId, allow: false })}>
+          Deny
+        </Button>
+        <Button size="sm" variant="primary" icon={confirming ? TriangleAlert : Check} disabled={busy} onClick={approve}>
+          {confirming ? "Approve anyway" : "Approve"}
+        </Button>
+      </span>
+      {confirming && <span className="text-[11px] text-warn-text">This command looks risky. Click again to approve.</span>}
+      {answer.isError && <span className="max-w-[320px] text-right text-[11px] text-danger-text">{answer.error.message}</span>}
+    </span>
   );
 }

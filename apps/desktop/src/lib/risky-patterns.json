@@ -1,0 +1,15 @@
+{
+  "_comment": "Commands that deserve a second look before approving from AgentScope. Case-insensitive; shared by the UI (lib/risky.ts) and the tray (src-tauri/src/risky.rs).",
+  "patterns": [
+    "\\brm\\s+(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|--recursive|--force)\\b",
+    "\\bgit\\s+push\\b.*(--force\\b|-f\\b|--force-with-lease\\b|\\+\\w)",
+    "\\bgit\\s+(reset\\s+--hard|clean\\s+-[a-z]*f)",
+    "\\b(curl|wget)\\b[^|]*\\|\\s*(sudo\\s+)?(ba|z)?sh\\b",
+    "\\bsudo\\b",
+    "\\b(mkfs|dd\\s+if=|shutdown|reboot)\\b",
+    "\\bchmod\\s+(-R\\s+)?777\\b",
+    "\\b(drop\\s+(table|database)|truncate\\s+table)\\b",
+    "\\bnpm\\s+publish\\b|\\bcargo\\s+publish\\b",
+    "\\bterraform\\s+(apply|destroy)\\b|\\bkubectl\\s+delete\\b"
+  ]
+}
