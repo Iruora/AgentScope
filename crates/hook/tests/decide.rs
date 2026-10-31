@@ -1,9 +1,6 @@
-//! The real shim binary against the real ingest server: a permission prompt
+//! The shim's main logic against the real ingest server: a permission prompt
 //! answered in the app comes out as Claude Code's hook output, and an
 //! unanswered one prints nothing so Claude Code asks as usual.
-
-use std::io::Write;
-use std::process::{Command, Stdio};
 
 use agentscope_core::ingest::{DecideRequest, IngestServer};
 use agentscope_core::Decision;
@@ -11,28 +8,26 @@ use tokio::sync::mpsc;
 
 const PAYLOAD: &str = r#"{"session_id":"s1","hook_event_name":"PermissionRequest","tool_name":"Bash","tool_input":{"command":"npm publish"},"cwd":"/w"}"#;
 
-fn run_shim(data_dir: &std::path::Path) -> std::process::Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_agentscope-hook"))
-        .args([
+/// Runs the shim's main logic in-process. The built binary is not used:
+/// tauri-build overwrites `target/*/agentscope-hook` with the sidecar
+/// placeholder when the desktop crate builds in the same workspace.
+fn run_shim(data_dir: &std::path::Path) -> Vec<u8> {
+    let mut stdout = Vec::new();
+    agentscope_hook::run(
+        [
             "--harness",
             "claude-code",
             "--event",
             "PermissionRequest",
             "--decide",
-        ])
-        .env("AGENTSCOPE_DATA_DIR", data_dir)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .unwrap();
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(PAYLOAD.as_bytes())
-        .unwrap();
-    child.wait_with_output().unwrap()
+        ]
+        .map(String::from)
+        .to_vec(),
+        PAYLOAD.as_bytes(),
+        &mut stdout,
+        Some(data_dir.to_owned()),
+    );
+    stdout
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -61,8 +56,7 @@ async fn answers_reach_claude_code_and_silence_lets_it_ask() {
     let denied = tokio::task::spawn_blocking(move || run_shim(&path))
         .await
         .unwrap();
-    assert!(denied.status.success());
-    let out: serde_json::Value = serde_json::from_slice(&denied.stdout).unwrap();
+    let out: serde_json::Value = serde_json::from_slice(&denied).unwrap();
     assert_eq!(
         out,
         serde_json::json!({ "hookSpecificOutput": {
@@ -75,8 +69,7 @@ async fn answers_reach_claude_code_and_silence_lets_it_ask() {
     let silent = tokio::task::spawn_blocking(move || run_shim(&path))
         .await
         .unwrap();
-    assert!(silent.status.success());
-    assert!(silent.stdout.is_empty(), "no answer prints nothing");
+    assert!(silent.is_empty(), "no answer prints nothing");
     app.await.unwrap();
 
     // With the app gone, the shim still exits 0, prints nothing, and spools.
@@ -85,7 +78,6 @@ async fn answers_reach_claude_code_and_silence_lets_it_ask() {
     let offline = tokio::task::spawn_blocking(move || run_shim(&path))
         .await
         .unwrap();
-    assert!(offline.status.success());
-    assert!(offline.stdout.is_empty());
+    assert!(offline.is_empty());
     assert!(dir.path().join("spool/pending.jsonl").exists());
 }

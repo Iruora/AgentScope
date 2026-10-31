@@ -258,6 +258,51 @@ pub fn spool(data_dir: &Path, line: &[u8]) -> io::Result<()> {
         .write_all(&record)
 }
 
+/// Everything `main` does after the `--version` check, with the process's
+/// streams passed in so tests can run it in-process. Never fails: the
+/// harness must not be blocked by AgentScope.
+pub fn run(
+    raw_args: Vec<String>,
+    stdin: impl std::io::Read,
+    stdout: &mut impl std::io::Write,
+    data_dir: Option<std::path::PathBuf>,
+) {
+    let deadline = std::time::Instant::now() + BUDGET;
+    let args = match parse_args(raw_args) {
+        Ok(args) => args,
+        Err(err) => {
+            eprintln!("agentscope-hook: {err}");
+            eprintln!("usage: agentscope-hook --harness <claude-code|codex|copilot-cli|cursor> --event <name> [--decide]");
+            return;
+        }
+    };
+    let payload = read_payload(stdin);
+    let Some(data_dir) = data_dir else {
+        return;
+    };
+    let event = wrap(&args, payload);
+    if !args.decide {
+        deliver(&data_dir, &event, deadline);
+        return;
+    }
+    match decide(&data_dir, &event, BUDGET) {
+        Ok(Some(decision)) => {
+            if let Some(out) = render_decision(args.harness, &args.event, &decision) {
+                let _ = writeln!(stdout, "{out}");
+                let _ = stdout.flush();
+            }
+        }
+        // The harness shows its own prompt, as without AgentScope.
+        Ok(None) => {}
+        // The app is not running: keep the event for later, answer nothing.
+        Err(_) => {
+            if let Ok(line) = serde_json::to_vec(&event) {
+                let _ = spool(&data_dir, &line);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
