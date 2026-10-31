@@ -230,6 +230,7 @@ mod tests {
             agents: vec![],
             approvals: vec![],
             waiting_count: 0,
+            concerns: vec![],
         };
         let mut signals = std::collections::HashMap::new();
         signals.insert(

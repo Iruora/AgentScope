@@ -157,17 +157,48 @@ impl Engine {
         let mut inner = self.lock();
         let pruned = inner.store.prune(retention)?;
         if pruned > 0 {
-            inner.graph.forget_ended_before(Utc::now() - retention);
+            let keep = inner.store.pinned()?;
+            inner
+                .graph
+                .forget_ended_before(Utc::now() - retention, &keep);
         }
         Ok(())
+    }
+
+    pub fn labels(&self) -> Result<Vec<agentscope_core::SessionLabel>, StoreError> {
+        self.lock().store.labels()
+    }
+
+    pub fn set_label(
+        &self,
+        label: &agentscope_core::SessionLabel,
+    ) -> Result<agentscope_core::SessionLabel, StoreError> {
+        self.lock().store.set_label(label)
     }
 
     pub fn snapshot(&self) -> Snapshot {
         self.lock().graph.snapshot()
     }
 
+    /// Ids of the current concerns, to notice when they change between events.
+    pub fn concern_ids(&self) -> std::collections::BTreeSet<String> {
+        self.lock()
+            .graph
+            .concerns(Utc::now())
+            .into_iter()
+            .map(|c| c.id)
+            .collect()
+    }
+
     pub fn session(&self, id: &str) -> Option<Session> {
         self.lock().graph.session(id).cloned()
+    }
+
+    pub fn usage_since(
+        &self,
+        day: &str,
+    ) -> Result<Vec<agentscope_core::store::UsageRow>, StoreError> {
+        self.lock().store.usage_since(day)
     }
 
     pub fn session_events(&self, id: &str, limit: u32) -> Result<Vec<AgentEvent>, StoreError> {

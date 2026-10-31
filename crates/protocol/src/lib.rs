@@ -60,6 +60,16 @@ impl HarnessId {
             HarnessId::Cursor => "cursor",
         }
     }
+
+    /// The product name, for people.
+    pub fn display_name(self) -> &'static str {
+        match self {
+            HarnessId::ClaudeCode => "Claude Code",
+            HarnessId::Codex => "Codex",
+            HarnessId::CopilotCli => "Copilot CLI",
+            HarnessId::Cursor => "Cursor",
+        }
+    }
 }
 
 impl fmt::Display for HarnessId {

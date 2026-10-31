@@ -57,7 +57,16 @@ Turn on **Answer approvals from AgentScope** for Claude Code in **Settings → I
 
 **Settings → Phone push** sends the same alerts to your phone through ntfy, Pushover, a Discord or Slack webhook, or a Telegram bot. It is off by default, and unless you include names and commands, the message only says that an agent needs you.
 
-Ended sessions stay in **History** for 7 days by default; change it in **Settings → History**.
+### Keeping track
+
+- **Usage** estimates what each day, harness, repo and model cost at API list prices, from the token counts the harnesses report. The prices ship with the app; put a `prices.json` in the data folder to override them. On a subscription plan this is what the same work would cost through the API, not what you pay.
+- **Alerts** on session cards flag a tool running for 10 minutes or more, the same call failing 3 times in a row, a session quiet for 15 minutes, and two live sessions editing the same file. Desktop notifications for them are off by default (**Settings → Notifications**).
+- **Files** on a session page lists the files the agent wrote, with a read-only `git diff` of each.
+- **Labels** let you pin, rename, tag and annotate a session from its page. Pinned sessions never expire, and tags become filters on Overview and History.
+- **Export** saves a session as Markdown (to read or paste into a PR) or JSON, with keys and tokens redacted.
+- **Mini widget**: a small always-on-top window listing who needs you and every live agent. Toggle it from the tray menu or **Settings → Quick access**.
+
+Ended sessions stay in **History** for 7 days by default; change it in **Settings → History**. Daily usage totals are kept for 90 days.
 
 To uninstall, disconnect each harness in Settings first, then delete the app. If you skip that, the leftover hooks simply do nothing.
 

@@ -44,6 +44,26 @@ export const commands = {
 	closePopup: () => __TAURI_INVOKE<void>("close_popup"),
 	/**  Sends a test message with the given push settings, before saving them. */
 	testPush: (push: PushSettings_Deserialize) => typedError<null, string>(__TAURI_INVOKE("test_push", { push })),
+	/**  Token usage and estimated cost over the last `days` days (7, 30 or 90). */
+	getUsage: (days: number) => typedError<UsageReport_Serialize, string>(__TAURI_INVOKE("get_usage", { days })),
+	/**  Estimated cost of each session that has a priced model. */
+	getCosts: () => __TAURI_INVOKE<{ [key in string]: number | null }>("get_costs"),
+	/**
+	 *  What changed in a file the session wrote, from `git diff`. Read-only, and
+	 *  only for files the session actually touched.
+	 */
+	getFileDiff: (sessionId: string, path: string) => typedError<FileDiff, string>(__TAURI_INVOKE("get_file_diff", { sessionId, path })),
+	/**  Pins, names, tags and notes the user added to sessions. */
+	getLabels: () => typedError<SessionLabel_Serialize[], string>(__TAURI_INVOKE("get_labels")),
+	/**  Saves one session's label and returns it cleaned up. */
+	setLabel: (label: SessionLabel_Deserialize) => typedError<SessionLabel_Serialize, string>(__TAURI_INVOKE("set_label", { label })),
+	/**
+	 *  Saves the session as Markdown or JSON where the user picks, redacted.
+	 *  Returns the saved path, or `None` when the user cancels.
+	 */
+	exportSession: (sessionId: string, format: ExportFormat) => typedError<string | null, string>(__TAURI_INVOKE("export_session", { sessionId, format })),
+	/**  Shows or hides the mini widget and remembers it for the next launch. */
+	setWidget: (visible: boolean) => typedError<null, string>(__TAURI_INVOKE("set_widget", { visible })),
 };
 
 /** Events */
@@ -138,6 +158,8 @@ export type Agent_Deserialize = {
 	startedAt: string,
 	endedAt?: string | null,
 	result?: AgentResult | null,
+	/**  The same tool call failing again and again. */
+	failures?: FailureStreak | null,
 };
 
 export type Agent_Serialize = {
@@ -154,6 +176,8 @@ export type Agent_Serialize = {
 	startedAt: string,
 	endedAt: string | null,
 	result: AgentResult | null,
+	/**  The same tool call failing again and again. */
+	failures: FailureStreak | null,
 };
 
 export type AppInfo = AppInfo_Serialize | AppInfo_Deserialize;
@@ -172,6 +196,49 @@ export type AppInfo_Serialize = {
 	/**  `None` until the ingest server is up, or if it failed to start. */
 	ingestPort: number | null,
 	harnesses: Detection_Serialize[],
+};
+
+/**  Something about a live session worth a look, worked out from the graph. */
+export type Concern = Concern_Serialize | Concern_Deserialize;
+
+export type ConcernKind = 
+/**  One tool call has run for a long time. */
+"long_tool" | 
+/**  The same tool call failed several times in a row. */
+"repeated_failure" | 
+/**  A working session has gone quiet. */
+"silent" | 
+/**  Another live session wrote the same file recently. */
+"conflict";
+
+/**  Something about a live session worth a look, worked out from the graph. */
+export type Concern_Deserialize = {
+	/**  Stable while the concern lasts, to notify once. */
+	id: string,
+	kind: ConcernKind,
+	sessionId: string,
+	agentId?: string | null,
+	/**  "Bash: npm test has run for 14 min" */
+	message: string,
+	since: string,
+	/**  For conflicts: the file and the other sessions writing it. */
+	path?: string | null,
+	otherSessionIds: string[],
+};
+
+/**  Something about a live session worth a look, worked out from the graph. */
+export type Concern_Serialize = {
+	/**  Stable while the concern lasts, to notify once. */
+	id: string,
+	kind: ConcernKind,
+	sessionId: string,
+	agentId: string | null,
+	/**  "Bash: npm test has run for 14 min" */
+	message: string,
+	since: string,
+	/**  For conflicts: the file and the other sessions writing it. */
+	path: string | null,
+	otherSessionIds: string[],
 };
 
 export type Confidence = "confirmed" | "inferred";
@@ -253,7 +320,9 @@ export type EventKind_Deserialize = { type: "sessionStarted"; cwd: string; model
 /**  A harness-provided name, preferred over the first prompt. */
 title?: string | null } | { type: "promptSubmitted"; prompt: string } | { type: "agentStarted"; 
 /**  Native id of the spawning agent; `None` means the main agent. */
-parent?: string | null; agentType?: string | null; description?: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error?: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail?: unknown | null; confidence: Confidence } | 
+parent?: string | null; agentType?: string | null; description?: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string; 
+/**  Absolute paths the call writes (edit, create, delete, patch). */
+files?: string[] } | { type: "toolFinished" } | { type: "toolFailed"; error?: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail?: unknown | null; confidence: Confidence } | 
 /**
  *  A tool call that may be waiting on a prompt the harness does not
  *  report (Cursor). If no result arrives within a few seconds it turns
@@ -273,7 +342,9 @@ export type EventKind_Serialize = { type: "sessionStarted"; cwd: string; model: 
 /**  A harness-provided name, preferred over the first prompt. */
 title: string | null } | { type: "promptSubmitted"; prompt: string } | { type: "agentStarted"; 
 /**  Native id of the spawning agent; `None` means the main agent. */
-parent: string | null; agentType: string | null; description: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail: unknown | null; confidence: Confidence } | 
+parent: string | null; agentType: string | null; description: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string; 
+/**  Absolute paths the call writes (edit, create, delete, patch). */
+files?: string[] } | { type: "toolFinished" } | { type: "toolFailed"; error: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail: unknown | null; confidence: Confidence } | 
 /**
  *  A tool call that may be waiting on a prompt the harness does not
  *  report (Cursor). If no result arrives within a few seconds it turns
@@ -288,6 +359,35 @@ approvalId: string | null; resolution: Resolution } | { type: "waitingForInput" 
 { type: "tokensUsed"; tokens: Tokens_Serialize } | { type: "heartbeat"; pid: number } | { type: "unknown"; event: string; raw: unknown };
 
 export type EventSource = "hook" | "transcript" | "scan" | "process";
+
+export type ExportFormat = "markdown" | "json";
+
+export type FailureStreak = {
+	summary: string,
+	count: number,
+	lastAt: string,
+};
+
+export type FileDiff = {
+	/**  Unified diff against the index and HEAD, empty when the file is unchanged. */
+	diff: string,
+	/**  Git does not track the file yet. */
+	untracked: boolean,
+	/**  The file is gone from disk. */
+	deleted: boolean,
+	truncated: boolean,
+};
+
+/**  A file an agent edited, created or deleted. */
+export type FileTouch = {
+	/**  Absolute path. */
+	path: string,
+	edits: number,
+	firstAt: string,
+	lastAt: string,
+	/**  The agent that touched it last. */
+	agentId: string,
+};
 
 export type GoToAgent = GoToAgent_Serialize | GoToAgent_Deserialize;
 
@@ -477,6 +577,29 @@ export type Resolution = "approved" | "denied" | "cancelled" | "unknown";
 
 export type Session = Session_Serialize | Session_Deserialize;
 
+/**  What the user added to a session. Pinned sessions are kept past retention. */
+export type SessionLabel = SessionLabel_Serialize | SessionLabel_Deserialize;
+
+/**  What the user added to a session. Pinned sessions are kept past retention. */
+export type SessionLabel_Deserialize = {
+	sessionId: string,
+	pinned?: boolean,
+	/**  Shown instead of the harness's title. */
+	name?: string | null,
+	tags?: string[],
+	note?: string | null,
+};
+
+/**  What the user added to a session. Pinned sessions are kept past retention. */
+export type SessionLabel_Serialize = {
+	sessionId: string,
+	pinned: boolean,
+	/**  Shown instead of the harness's title. */
+	name: string | null,
+	tags: string[],
+	note: string | null,
+};
+
 export type Session_Deserialize = {
 	/**  `${harness}:${nativeSessionId}` */
 	id: string,
@@ -495,6 +618,11 @@ export type Session_Deserialize = {
 	transcriptPath?: string | null,
 	tokens?: Tokens_Deserialize | null,
 	rootAgentId: string,
+	/**
+	 *  Files the session's agents wrote, most recent first, capped at
+	 *  [`Session::MAX_FILES`].
+	 */
+	files?: FileTouch[],
 };
 
 export type Session_Serialize = {
@@ -515,6 +643,11 @@ export type Session_Serialize = {
 	transcriptPath: string | null,
 	tokens: Tokens_Serialize | null,
 	rootAgentId: string,
+	/**
+	 *  Files the session's agents wrote, most recent first, capped at
+	 *  [`Session::MAX_FILES`].
+	 */
+	files: FileTouch[],
 };
 
 export type Settings = Settings_Serialize | Settings_Deserialize;
@@ -544,6 +677,10 @@ export type Settings_Deserialize = {
 	confirmRisky?: boolean,
 	/**  Pop up a small always-on-top window when a prompt can be answered here. */
 	popupApprovals?: boolean,
+	/**  Notify about stuck tools, failure loops, quiet sessions and conflicts. */
+	notifyConcerns?: boolean,
+	/**  Show the mini widget; it reopens on launch while this is on. */
+	widget?: boolean,
 	/**  Phone push, off by default. */
 	push?: PushSettings_Deserialize,
 };
@@ -573,6 +710,10 @@ export type Settings_Serialize = {
 	confirmRisky: boolean,
 	/**  Pop up a small always-on-top window when a prompt can be answered here. */
 	popupApprovals: boolean,
+	/**  Notify about stuck tools, failure loops, quiet sessions and conflicts. */
+	notifyConcerns: boolean,
+	/**  Show the mini widget; it reopens on launch while this is on. */
+	widget: boolean,
 	/**  Phone push, off by default. */
 	push: PushSettings_Serialize,
 };
@@ -589,6 +730,8 @@ export type Snapshot_Deserialize = {
 	approvals: PendingApproval_Deserialize[],
 	/**  Live sessions that need the user. Drives the tray badge. */
 	waitingCount: number,
+	/**  Stuck tools, failure loops, quiet sessions and file conflicts. */
+	concerns: Concern_Deserialize[],
 };
 
 /**  What the UI renders. */
@@ -600,6 +743,8 @@ export type Snapshot_Serialize = {
 	approvals: PendingApproval_Serialize[],
 	/**  Live sessions that need the user. Drives the tray badge. */
 	waitingCount: number,
+	/**  Stuck tools, failure loops, quiet sessions and file conflicts. */
+	concerns: Concern_Serialize[],
 };
 
 /**  Where the agent runs, for "Go to agent". Filled in by step 3. */
@@ -662,6 +807,45 @@ export type UpdateInfo_Serialize = {
 	 *  Windows zip; those link to the release page instead.
 	 */
 	canInstall: boolean,
+};
+
+export type UsageReport = UsageReport_Serialize | UsageReport_Deserialize;
+
+export type UsageReport_Deserialize = {
+	days: number,
+	total: UsageTotal,
+	/**  One entry per day in the range, oldest first, including empty days. */
+	byDay: UsageTotal[],
+	byHarness: UsageTotal[],
+	byRepo: UsageTotal[],
+	byModel: UsageTotal[],
+	unpricedModels: string[],
+	pricesChecked: string,
+	pricesError?: string | null,
+};
+
+export type UsageReport_Serialize = {
+	days: number,
+	total: UsageTotal,
+	/**  One entry per day in the range, oldest first, including empty days. */
+	byDay: UsageTotal[],
+	byHarness: UsageTotal[],
+	byRepo: UsageTotal[],
+	byModel: UsageTotal[],
+	unpricedModels: string[],
+	pricesChecked: string,
+	pricesError: string | null,
+};
+
+export type UsageTotal = {
+	key: string,
+	input: number | null,
+	output: number | null,
+	cached: number | null,
+	/**  Estimated USD for the priced part. */
+	cost: number | null,
+	/**  Tokens of models without a price, left out of `cost`. */
+	unpricedTokens: number | null,
 };
 
 /* Tauri Specta runtime */

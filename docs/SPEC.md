@@ -275,7 +275,7 @@ only for the retention window, and secrets-looking values (tokens, keys,
    `waiting_approval`, `maybe_waiting`, or `waiting_input` to the top.
 3. **Approvals inbox.** Flat list of pending approvals across all harnesses,
    oldest first: tool, summary, repo, waiting-for timer, confidence badge.
-   Action: **Go to agent**. (v1.x adds Approve / Deny here.)
+   Action: **Go to agent**, plus Approve / Deny where answering is on (§9).
 4. **Session detail.** Header (harness, model, cwd, branch, tokens), the agent
    tree on the left, a timeline of normalized events on the right (prompts,
    tool calls with duration and status, approvals, subagent spawn/finish).
@@ -374,3 +374,32 @@ dialog while the hook waits, or only after the hook returns empty.
 Phone push (also v1.3) sends desktop-notification alerts through ntfy,
 Pushover, Discord/Slack webhooks or Telegram. Off by default; without
 "include names and commands" the text is generic.
+
+## 10. Usage, alerts, files, labels, export, widget (v1.4)
+
+- **Usage.** `store::record_usage` runs inside every save and adds each
+  session's token growth since the last recorded total to
+  `usage_daily(day, session_id, model)`, keyed by the local day of the last
+  event. Rows are kept `USAGE_DAYS` (90) days, independent of retention.
+  Cost is estimated in `usage.rs` from `prices.json` (bundled, overridable in
+  the data dir); models match by normalized longest prefix, cache reads
+  default to 10 % of the input price, and unpriced models are listed.
+- **Concerns.** `Graph::concerns(now)` is computed for each snapshot:
+  `long_tool` (a tool running 10 min), `repeated_failure` (3 failures of the
+  same summary, cleared by a success), `silent` (thinking with no event for
+  15 min) and `conflict` (live sessions writing the same path within 10 min).
+  The 5 s sweep republishes when the set of ids changes; notifications are
+  opt-in (`notify_concerns`).
+- **Files.** `ToolStarted.files` carries the absolute paths a write-type tool
+  touches (`summary::tool_files`, including `apply_patch`). Sessions keep the
+  newest `MAX_FILES` (300). `get_file_diff` serves only those paths and runs
+  read-only `git diff HEAD`, capped at 200 KB.
+- **Labels.** `session_meta(session_id, pinned, name, tags, note)`, cleaned by
+  `SessionLabel::cleaned`. Prune skips pinned sessions and their events and
+  drops labels of pruned sessions.
+- **Export.** `export_session` writes Markdown or JSON
+  (`agentscope.session.v1`) through a native save dialog; every string goes
+  through `redact`.
+- **Widget.** A second undecorated, always-on-top window (`widget`) rendered
+  by the same bundle; it resizes itself to its rows. `settings.widget`
+  reopens it on launch; the tray, Settings and the palette toggle it.

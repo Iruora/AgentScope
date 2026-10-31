@@ -187,6 +187,7 @@ pub fn set_settings(
         ));
     }
     settings.push.validate()?;
+    let widget_changed = settings.widget != runtime.settings().widget;
     if settings.global_shortcut != runtime.settings().global_shortcut {
         crate::hotkey::apply(&app, &settings.global_shortcut)?;
     }
@@ -196,7 +197,12 @@ pub fn set_settings(
             .set_retention(settings.retention_days)
             .map_err(|e| e.to_string())?;
     }
+    let widget = settings.widget;
     *runtime.settings.lock().unwrap_or_else(|e| e.into_inner()) = settings;
+    if widget_changed {
+        crate::widget::set(&app, widget);
+        crate::publish_changed(&app);
+    }
     Ok(())
 }
 
@@ -362,4 +368,162 @@ pub async fn test_push(push: crate::push::PushSettings) -> Result<(), String> {
         approval: false,
     };
     crate::push::send(&push, &msg).await
+}
+
+/// Token usage and estimated cost over the last `days` days (7, 30 or 90).
+#[tauri::command]
+#[specta::specta]
+pub fn get_usage(
+    engine: State<'_, Arc<Engine>>,
+    runtime: State<'_, Runtime>,
+    days: u32,
+) -> Result<crate::usage::UsageReport, String> {
+    let days = days.clamp(1, agentscope_core::store::USAGE_DAYS as u32);
+    let keys = crate::usage::day_keys(days);
+    let rows = engine.usage_since(&keys[0]).map_err(|e| e.to_string())?;
+    let prices = crate::usage::Prices::load(&runtime.data_dir);
+    Ok(crate::usage::report(&rows, keys, &prices))
+}
+
+/// Estimated cost of each session that has a priced model.
+#[tauri::command]
+#[specta::specta]
+pub fn get_costs(
+    engine: State<'_, Arc<Engine>>,
+    runtime: State<'_, Runtime>,
+) -> std::collections::HashMap<String, f64> {
+    let prices = crate::usage::Prices::load(&runtime.data_dir);
+    crate::usage::session_costs(&engine.snapshot().sessions, &prices)
+}
+
+/// What changed in a file the session wrote, from `git diff`. Read-only, and
+/// only for files the session actually touched.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_file_diff(
+    engine: State<'_, Arc<Engine>>,
+    session_id: String,
+    path: String,
+) -> Result<crate::files::FileDiff, String> {
+    let session = engine
+        .session(&session_id)
+        .ok_or("This session is no longer in the history.")?;
+    if !session.files.iter().any(|f| f.path == path) {
+        return Err("This session did not write that file.".into());
+    }
+    let repo = session
+        .repo
+        .map(|r| r.root)
+        .ok_or("The session is not in a git repository, so there is no diff to show.")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::files::diff(std::path::Path::new(&repo), std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+/// Pins, names, tags and notes the user added to sessions.
+#[tauri::command]
+#[specta::specta]
+pub fn get_labels(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Vec<agentscope_core::SessionLabel>, String> {
+    engine.labels().map_err(|e| e.to_string())
+}
+
+/// Saves one session's label and returns it cleaned up.
+#[tauri::command]
+#[specta::specta]
+pub fn set_label(
+    engine: State<'_, Arc<Engine>>,
+    label: agentscope_core::SessionLabel,
+) -> Result<agentscope_core::SessionLabel, String> {
+    engine.set_label(&label).map_err(|e| e.to_string())
+}
+
+/// Saves the session as Markdown or JSON where the user picks, redacted.
+/// Returns the saved path, or `None` when the user cancels.
+#[tauri::command]
+#[specta::specta]
+pub async fn export_session(
+    app: AppHandle,
+    session_id: String,
+    format: crate::export::ExportFormat,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let engine = app.state::<Arc<Engine>>().inner().clone();
+    let data_dir = app.state::<Runtime>().data_dir.clone();
+    let session = engine
+        .session(&session_id)
+        .ok_or("This session is no longer in the history.")?;
+    let snapshot = engine.snapshot();
+    let agents: Vec<_> = snapshot
+        .agents
+        .into_iter()
+        .filter(|a| a.session_id == session_id)
+        .collect();
+    let events = engine
+        .session_events(&session_id, crate::export::MAX_EVENTS)
+        .map_err(|e| e.to_string())?;
+    let label = engine
+        .labels()
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .find(|l| l.session_id == session_id);
+    let prices = crate::usage::Prices::load(&data_dir);
+    let cost = crate::usage::session_costs(std::slice::from_ref(&session), &prices)
+        .get(&session_id)
+        .copied();
+    let export = crate::export::Export {
+        session: &session,
+        agents: &agents,
+        events: &events,
+        label: label.as_ref(),
+        cost,
+    };
+    let body = match format {
+        crate::export::ExportFormat::Markdown => crate::export::markdown(&export),
+        crate::export::ExportFormat::Json => {
+            crate::export::json(&export).map_err(|e| e.to_string())?
+        }
+    };
+    let name = crate::export::file_name(&export, format);
+    let (filter, ext) = match format {
+        crate::export::ExportFormat::Markdown => ("Markdown", "md"),
+        crate::export::ExportFormat::Json => ("JSON", "json"),
+    };
+    let dialog = app
+        .dialog()
+        .file()
+        .set_title("Export session")
+        .set_file_name(name)
+        .add_filter(filter, &[ext]);
+    let picked = tauri::async_runtime::spawn_blocking(move || dialog.blocking_save_file())
+        .await
+        .map_err(|e| e.to_string())?;
+    let Some(path) = picked else {
+        return Ok(None);
+    };
+    let path = path.into_path().map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| format!("Could not save {}: {e}", path.display()))?;
+    Ok(Some(path.display().to_string()))
+}
+
+/// Shows or hides the mini widget and remembers it for the next launch.
+#[tauri::command]
+#[specta::specta]
+pub fn set_widget(app: AppHandle, visible: bool) -> Result<(), String> {
+    toggle_widget(&app, visible)
+}
+
+pub fn toggle_widget(app: &AppHandle, visible: bool) -> Result<(), String> {
+    let runtime = app.state::<Runtime>();
+    let mut settings = runtime.settings();
+    settings.widget = visible;
+    crate::settings::save(&runtime.data_dir, &settings).map_err(|e| e.to_string())?;
+    *runtime.settings.lock().unwrap_or_else(|e| e.into_inner()) = settings;
+    crate::widget::set(app, visible);
+    crate::publish_changed(app);
+    Ok(())
 }

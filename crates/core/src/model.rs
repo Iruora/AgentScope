@@ -28,12 +28,31 @@ pub struct Session {
     pub transcript_path: Option<String>,
     pub tokens: Option<Tokens>,
     pub root_agent_id: String,
+    /// Files the session's agents wrote, most recent first, capped at
+    /// [`Session::MAX_FILES`].
+    #[serde(default)]
+    pub files: Vec<FileTouch>,
 }
 
 impl Session {
+    pub const MAX_FILES: usize = 300;
+
     pub fn key(harness: HarnessId, native_id: &str) -> String {
         format!("{harness}:{native_id}")
     }
+}
+
+/// A file an agent edited, created or deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FileTouch {
+    /// Absolute path.
+    pub path: String,
+    pub edits: u32,
+    pub first_at: Timestamp,
+    pub last_at: Timestamp,
+    /// The agent that touched it last.
+    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -82,6 +101,17 @@ pub struct Agent {
     pub started_at: Timestamp,
     pub ended_at: Option<Timestamp>,
     pub result: Option<AgentResult>,
+    /// The same tool call failing again and again.
+    #[serde(default)]
+    pub failures: Option<FailureStreak>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureStreak {
+    pub summary: String,
+    pub count: u32,
+    pub last_at: Timestamp,
 }
 
 impl Agent {
@@ -191,4 +221,89 @@ pub enum Resolution {
     Denied,
     Cancelled,
     Unknown,
+}
+
+/// Something about a live session worth a look, worked out from the graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Concern {
+    /// Stable while the concern lasts, to notify once.
+    pub id: String,
+    pub kind: ConcernKind,
+    pub session_id: String,
+    pub agent_id: Option<String>,
+    /// "Bash: npm test has run for 14 min"
+    pub message: String,
+    pub since: Timestamp,
+    /// For conflicts: the file and the other sessions writing it.
+    pub path: Option<String>,
+    pub other_session_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ConcernKind {
+    /// One tool call has run for a long time.
+    LongTool,
+    /// The same tool call failed several times in a row.
+    RepeatedFailure,
+    /// A working session has gone quiet.
+    Silent,
+    /// Another live session wrote the same file recently.
+    Conflict,
+}
+
+/// What the user added to a session. Pinned sessions are kept past retention.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLabel {
+    pub session_id: String,
+    #[serde(default)]
+    pub pinned: bool,
+    /// Shown instead of the harness's title.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+impl SessionLabel {
+    pub const MAX_TAGS: usize = 12;
+    pub const MAX_TAG_LEN: usize = 32;
+    pub const MAX_NAME_LEN: usize = 120;
+    pub const MAX_NOTE_LEN: usize = 4000;
+
+    /// Trims text, drops blanks, lowercases and dedupes tags, and caps lengths.
+    pub fn cleaned(mut self) -> Self {
+        fn text(value: Option<String>, max: usize) -> Option<String> {
+            let value = value?.trim().chars().take(max).collect::<String>();
+            (!value.is_empty()).then_some(value)
+        }
+        self.name = text(self.name, Self::MAX_NAME_LEN);
+        self.note = text(self.note, Self::MAX_NOTE_LEN);
+        let mut tags: Vec<String> = Vec::new();
+        for tag in self.tags {
+            let tag: String = tag
+                .trim()
+                .trim_start_matches('#')
+                .to_lowercase()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join("-")
+                .chars()
+                .take(Self::MAX_TAG_LEN)
+                .collect();
+            if !tag.is_empty() && !tags.contains(&tag) && tags.len() < Self::MAX_TAGS {
+                tags.push(tag);
+            }
+        }
+        self.tags = tags;
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.pinned && self.name.is_none() && self.tags.is_empty() && self.note.is_none()
+    }
 }
