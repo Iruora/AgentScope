@@ -32,6 +32,10 @@ pub struct AppInfo {
 pub struct Integration {
     pub detection: Detection,
     pub hook_status: HookStatus,
+    /// The harness takes answers to permission prompts from a hook.
+    pub can_answer: bool,
+    /// The installed hooks let AgentScope answer its permission prompts.
+    pub answers: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Type)]
@@ -94,11 +98,16 @@ pub fn get_integrations(
     let harnesses = engine
         .detections()
         .into_iter()
-        .map(|detection| Integration {
-            hook_status: shim.as_deref().map_or(HookStatus::NotInstalled, |s| {
-                engine.hooks_status(detection.harness, s)
-            }),
-            detection,
+        .map(|detection| {
+            let adapter = engine.adapter(detection.harness);
+            Integration {
+                hook_status: shim.as_deref().map_or(HookStatus::NotInstalled, |s| {
+                    engine.hooks_status(detection.harness, s)
+                }),
+                can_answer: adapter.is_some_and(|a| a.can_answer_approvals()),
+                answers: adapter.is_some_and(|a| a.answers_approvals()),
+                detection,
+            }
         })
         .collect();
     Integrations {
@@ -109,6 +118,8 @@ pub fn get_integrations(
 
 /// Connects (`connect: true`) or disconnects a harness. With `dry_run` the
 /// config is left alone and only the diff is returned, for the preview.
+/// `answer_approvals` installs the hook that lets AgentScope answer
+/// permission prompts, where the harness supports it.
 #[tauri::command]
 #[specta::specta]
 pub fn set_hooks(
@@ -117,12 +128,13 @@ pub fn set_hooks(
     harness: HarnessId,
     connect: bool,
     dry_run: bool,
+    answer_approvals: bool,
 ) -> Result<Diff, String> {
     let shim = shim::path(&runtime.data_dir).ok_or_else(|| {
         "The agentscope-hook helper is missing from this build. Reinstall AgentScope.".to_owned()
     })?;
     let diff = engine
-        .set_hooks(harness, &shim, connect, dry_run)
+        .set_hooks(harness, &shim, connect, dry_run, answer_approvals)
         .map_err(|e| e.to_string())?;
     if !dry_run {
         tracing::info!(%harness, connect, path = %diff.path, "updated hook config");
@@ -168,6 +180,12 @@ pub fn set_settings(
     runtime: State<'_, Runtime>,
     settings: Settings,
 ) -> Result<(), String> {
+    if !crate::settings::DECIDE_WINDOWS.contains(&settings.decide_window_secs) {
+        return Err(format!(
+            "{} seconds is not one of the offered waits",
+            settings.decide_window_secs
+        ));
+    }
     if settings.global_shortcut != runtime.settings().global_shortcut {
         crate::hotkey::apply(&app, &settings.global_shortcut)?;
     }
@@ -260,4 +278,55 @@ const NEW_ISSUE_URL: &str = "https://github.com/Iruora/AgentScope/issues/new";
 #[specta::specta]
 pub fn open_new_issue() -> Result<(), String> {
     tauri_plugin_opener::open_url(NEW_ISSUE_URL, None::<&str>).map_err(|e| e.to_string())
+}
+
+/// Approvals waiting for an answer in AgentScope right now.
+#[tauri::command]
+#[specta::specta]
+pub fn get_answerable(decisions: State<'_, crate::decide::Decisions>) -> Vec<String> {
+    decisions.ids()
+}
+
+/// Answers a waiting permission prompt. The agent goes on (or stops) at once.
+#[tauri::command]
+#[specta::specta]
+pub fn answer_approval(app: AppHandle, approval_id: String, allow: bool) -> Result<(), String> {
+    use agentscope_core::{Decision, Resolution};
+    let decision = if allow {
+        Decision::Allow
+    } else {
+        Decision::Deny {
+            message: crate::decide::DENY_MESSAGE.to_owned(),
+        }
+    };
+    if !app
+        .state::<crate::decide::Decisions>()
+        .answer(&approval_id, decision)
+    {
+        crate::publish_changed(&app);
+        return Err("This prompt is no longer waiting here. Answer it in the terminal.".to_owned());
+    }
+    tracing::info!(%approval_id, allow, "answered a permission prompt");
+    let engine = app.state::<Arc<Engine>>().inner().clone();
+    let resolution = if allow {
+        Resolution::Approved
+    } else {
+        Resolution::Denied
+    };
+    let mut outcome = engine.resolve_approval(&approval_id, resolution);
+    outcome.changed = true;
+    crate::publish_outcome(&app, &engine, outcome);
+    Ok(())
+}
+
+/// Hands a waiting prompt back to the harness, which then asks in the terminal.
+#[tauri::command]
+#[specta::specta]
+pub fn release_approval(app: AppHandle, approval_id: String) {
+    if app
+        .state::<crate::decide::Decisions>()
+        .release(&approval_id)
+    {
+        crate::publish_changed(&app);
+    }
 }

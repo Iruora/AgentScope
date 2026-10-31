@@ -8,9 +8,12 @@ use std::fs;
 use std::io::{self, BufRead, Write};
 use std::path::{Path, PathBuf};
 
+use std::time::Duration;
+
 use agentscope_protocol::{
-    ingest_info_path, now_ms, spool_dir, IngestInfo, RawHookEvent, INGEST_PATH, MAX_PAYLOAD_BYTES,
-    PROTOCOL_VERSION, TOKEN_HEADER,
+    ingest_info_path, now_ms, spool_dir, DecideReply, Decision, IngestInfo, RawHookEvent,
+    DECIDE_MAX_WAIT_SECS, DECIDE_PATH, INGEST_PATH, MAX_PAYLOAD_BYTES, PROTOCOL_VERSION,
+    TOKEN_HEADER,
 };
 use axum::extract::{DefaultBodyLimit, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -27,15 +30,29 @@ pub struct IngestServer {
     task: Option<JoinHandle<()>>,
 }
 
+/// A permission prompt from a `--decide` shim, waiting for the user's answer.
+/// Dropping `reply` without sending answers "no decision", and the harness
+/// then shows its own prompt.
+#[derive(Debug)]
+pub struct DecideRequest {
+    pub event: RawHookEvent,
+    pub reply: oneshot::Sender<Option<Decision>>,
+}
+
 #[derive(Clone)]
 struct Ctx {
     token: String,
     tx: mpsc::Sender<RawHookEvent>,
+    decide_tx: mpsc::Sender<DecideRequest>,
 }
 
 impl IngestServer {
     /// Binds the server and writes `ingest.json` so shims can find it.
-    pub async fn start(data_dir: &Path, tx: mpsc::Sender<RawHookEvent>) -> io::Result<Self> {
+    pub async fn start(
+        data_dir: &Path,
+        tx: mpsc::Sender<RawHookEvent>,
+        decide_tx: mpsc::Sender<DecideRequest>,
+    ) -> io::Result<Self> {
         fs::create_dir_all(data_dir)?;
         let listener = TcpListener::bind(("127.0.0.1", 0)).await?;
         let port = listener.local_addr()?.port();
@@ -54,8 +71,13 @@ impl IngestServer {
         let app = Router::new()
             .route("/v1/health", get(|| async { "ok" }))
             .route(INGEST_PATH, post(receive))
+            .route(DECIDE_PATH, post(decide))
             .layer(DefaultBodyLimit::max(MAX_PAYLOAD_BYTES + 64 * 1024))
-            .with_state(Ctx { token, tx });
+            .with_state(Ctx {
+                token,
+                tx,
+                decide_tx,
+            });
         let (shutdown, stop) = oneshot::channel::<()>();
         let task = tokio::spawn(async move {
             let serve = axum::serve(listener, app).with_graceful_shutdown(async {
@@ -94,16 +116,50 @@ impl Drop for IngestServer {
     }
 }
 
+fn authorized(ctx: &Ctx, headers: &HeaderMap) -> bool {
+    headers
+        .get(TOKEN_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|t| constant_time_eq(t.as_bytes(), ctx.token.as_bytes()))
+}
+
+/// Holds a `--decide` shim until the app answers, drops the request, or the
+/// shim's own cap is near. Any failure answers "no decision".
+async fn decide(
+    State(ctx): State<Ctx>,
+    headers: HeaderMap,
+    Json(mut event): Json<RawHookEvent>,
+) -> Result<Json<DecideReply>, StatusCode> {
+    if !authorized(&ctx, &headers) {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
+    if event.received_at == 0 {
+        event.received_at = now_ms();
+    }
+    let (reply, answer) = oneshot::channel();
+    if ctx
+        .decide_tx
+        .try_send(DecideRequest { event, reply })
+        .is_err()
+    {
+        tracing::warn!("decide queue unavailable, letting the harness ask");
+        return Ok(Json(DecideReply::default()));
+    }
+    let cap = Duration::from_secs(DECIDE_MAX_WAIT_SECS.saturating_sub(5));
+    let decision = tokio::time::timeout(cap, answer)
+        .await
+        .ok()
+        .and_then(Result::ok)
+        .flatten();
+    Ok(Json(DecideReply { decision }))
+}
+
 async fn receive(
     State(ctx): State<Ctx>,
     headers: HeaderMap,
     Json(mut event): Json<RawHookEvent>,
 ) -> StatusCode {
-    let authorized = headers
-        .get(TOKEN_HEADER)
-        .and_then(|v| v.to_str().ok())
-        .is_some_and(|t| constant_time_eq(t.as_bytes(), ctx.token.as_bytes()));
-    if !authorized {
+    if !authorized(&ctx, &headers) {
         return StatusCode::UNAUTHORIZED;
     }
     if event.received_at == 0 {
@@ -197,11 +253,15 @@ mod tests {
     }
 
     async fn post(port: u16, token: &str, body: &str) -> String {
+        post_to(INGEST_PATH, port, token, body).await
+    }
+
+    async fn post_to(path: &str, port: u16, token: &str, body: &str) -> String {
         let mut conn = tokio::net::TcpStream::connect(("127.0.0.1", port))
             .await
             .unwrap();
         let req = format!(
-            "POST {INGEST_PATH} HTTP/1.1\r\nHost: x\r\n{TOKEN_HEADER}: {token}\r\n\
+            "POST {path} HTTP/1.1\r\nHost: x\r\n{TOKEN_HEADER}: {token}\r\n\
              Content-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
@@ -215,7 +275,10 @@ mod tests {
     async fn accepts_events_with_the_token_only() {
         let dir = tempfile::tempdir().unwrap();
         let (tx, mut rx) = mpsc::channel(8);
-        let server = IngestServer::start(dir.path(), tx).await.unwrap();
+        let (decide_tx, _decide_rx) = mpsc::channel(8);
+        let server = IngestServer::start(dir.path(), tx, decide_tx)
+            .await
+            .unwrap();
         let info: IngestInfo =
             serde_json::from_slice(&fs::read(ingest_info_path(dir.path())).unwrap()).unwrap();
         assert_eq!(info.port, server.port);
@@ -231,6 +294,43 @@ mod tests {
 
         server.stop().await;
         assert!(!ingest_info_path(dir.path()).exists());
+    }
+
+    #[tokio::test]
+    async fn holds_decide_requests_until_the_app_answers() {
+        let dir = tempfile::tempdir().unwrap();
+        let (tx, _rx) = mpsc::channel(8);
+        let (decide_tx, mut decide_rx) = mpsc::channel::<DecideRequest>(8);
+        let server = IngestServer::start(dir.path(), tx, decide_tx)
+            .await
+            .unwrap();
+        let info: IngestInfo =
+            serde_json::from_slice(&fs::read(ingest_info_path(dir.path())).unwrap()).unwrap();
+        let body = serde_json::to_string(&raw("PermissionRequest", 5)).unwrap();
+
+        assert!(post_to(DECIDE_PATH, server.port, "wrong", &body)
+            .await
+            .starts_with("HTTP/1.1 401"));
+
+        // The app answers Allow.
+        let answer = tokio::spawn(async move {
+            let req = decide_rx.recv().await.unwrap();
+            assert_eq!(req.event.event, "PermissionRequest");
+            req.reply.send(Some(Decision::Allow)).unwrap();
+            // The second one is dropped unanswered.
+            drop(decide_rx.recv().await.unwrap());
+        });
+        let allowed = post_to(DECIDE_PATH, server.port, &info.token, &body).await;
+        assert!(allowed.starts_with("HTTP/1.1 200"), "{allowed}");
+        assert!(
+            allowed.ends_with(r#"{"decision":{"behavior":"allow"}}"#),
+            "{allowed}"
+        );
+
+        let none = post_to(DECIDE_PATH, server.port, &info.token, &body).await;
+        assert!(none.ends_with(r#"{"decision":null}"#), "{none}");
+        answer.await.unwrap();
+        server.stop().await;
     }
 
     #[test]

@@ -55,6 +55,7 @@ const CONFIG: HookConfig<'static> = HookConfig {
     entry: &hook_entry,
     grouped: true,
     required: &[],
+    decide_entry: None,
 };
 
 /// Codex's key for an event in hook state, e.g. `pre_tool_use`.
@@ -135,7 +136,12 @@ pub fn status(home: &Path, shim: &Path) -> HookStatus {
 }
 
 pub fn install(home: &Path, plan: &HookPlan) -> Result<Diff> {
-    CONFIG.install(&home.join("hooks.json"), &plan.shim_path, plan.dry_run)
+    CONFIG.install(
+        &home.join("hooks.json"),
+        &plan.shim_path,
+        plan.dry_run,
+        false,
+    )
 }
 
 pub fn uninstall(home: &Path, dry_run: bool) -> Result<Diff> {
@@ -152,6 +158,7 @@ mod tests {
         HookPlan {
             shim_path: PathBuf::from(shim),
             dry_run: false,
+            answer_approvals: false,
         }
     }
 
