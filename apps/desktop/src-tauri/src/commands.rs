@@ -389,3 +389,29 @@ pub fn get_costs(
     let prices = crate::usage::Prices::load(&runtime.data_dir);
     crate::usage::session_costs(&engine.snapshot().sessions, &prices)
 }
+
+/// What changed in a file the session wrote, from `git diff`. Read-only, and
+/// only for files the session actually touched.
+#[tauri::command]
+#[specta::specta]
+pub async fn get_file_diff(
+    engine: State<'_, Arc<Engine>>,
+    session_id: String,
+    path: String,
+) -> Result<crate::files::FileDiff, String> {
+    let session = engine
+        .session(&session_id)
+        .ok_or("This session is no longer in the history.")?;
+    if !session.files.iter().any(|f| f.path == path) {
+        return Err("This session did not write that file.".into());
+    }
+    let repo = session
+        .repo
+        .map(|r| r.root)
+        .ok_or("The session is not in a git repository, so there is no diff to show.")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        crate::files::diff(std::path::Path::new(&repo), std::path::Path::new(&path))
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}

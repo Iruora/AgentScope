@@ -106,7 +106,14 @@ export function Overview({
   const groups = [...grouped.entries()].sort(([a], [b]) => a.localeCompare(b));
 
   const card = (s: Session) => (
-    <SessionCard key={s.id} session={s} agents={agentsBySession.get(s.id) ?? []} now={now} onOpen={onOpen} />
+    <SessionCard
+      key={s.id}
+      session={s}
+      agents={agentsBySession.get(s.id) ?? []}
+      concerns={(snapshot.data?.concerns ?? []).filter((c) => c.sessionId === s.id)}
+      now={now}
+      onOpen={onOpen}
+    />
   );
   const toggle = (f: SessionFilter) => onFilter(filter === f ? "all" : f);
 

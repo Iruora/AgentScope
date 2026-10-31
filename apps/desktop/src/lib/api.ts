@@ -202,3 +202,13 @@ export function useUsage(days: number) {
 export function useCosts() {
   return useQuery({ queryKey: ["costs"], queryFn: () => commands.getCosts() });
 }
+
+/** `git diff` of a file the session wrote. */
+export function useFileDiff(sessionId: string, path: string | null) {
+  return useQuery({
+    queryKey: ["fileDiff", sessionId, path],
+    queryFn: () => unwrap(commands.getFileDiff(sessionId, path!)),
+    enabled: path != null,
+    staleTime: 0,
+  });
+}

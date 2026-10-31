@@ -2,6 +2,7 @@ mod commands;
 mod decide;
 mod diagnostics;
 mod engine;
+mod files;
 mod focus;
 mod hotkey;
 mod logbuf;
@@ -52,6 +53,8 @@ pub struct Runtime {
     ingest_port: Mutex<Option<u16>>,
     settings: Mutex<Settings>,
     notified: Mutex<HashMap<String, (AgentState, Instant)>>,
+    /// Concern ids last published, to notify each once.
+    concerns: Mutex<std::collections::BTreeSet<String>>,
     tray_menu: Mutex<tray::MenuKey>,
 }
 
@@ -95,6 +98,7 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::test_push,
             commands::get_usage,
             commands::get_costs,
+            commands::get_file_diff,
         ])
         .events(collect_events![
             GraphChanged,
@@ -202,6 +206,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         data_dir: data_dir.clone(),
         ingest_port: Mutex::new(None),
         notified: Mutex::new(HashMap::new()),
+        concerns: Mutex::new(std::collections::BTreeSet::new()),
         tray_menu: Mutex::new(tray::MenuKey::default()),
     });
 
@@ -386,7 +391,20 @@ fn spawn_sweeper(app: AppHandle, engine: Arc<Engine>) {
             })
             .await;
             match swept {
-                Ok(outcome) => publish(&app, &engine, outcome),
+                Ok(mut outcome) => {
+                    // Concerns appear with time alone (a tool that runs on).
+                    let ids = engine.concern_ids();
+                    if *app
+                        .state::<Runtime>()
+                        .concerns
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        != ids
+                    {
+                        outcome.changed = true;
+                    }
+                    publish(&app, &engine, outcome)
+                }
                 Err(err) => tracing::error!(%err, "sweep failed"),
             }
         }
@@ -413,6 +431,7 @@ fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
         return;
     }
     let snapshot = engine.snapshot();
+    notify_concerns(app, &snapshot);
     let open = snapshot.approvals.iter().map(|a| a.id.clone()).collect();
     let decisions = app.state::<decide::Decisions>();
     decisions.retain_open(&open);
@@ -431,6 +450,48 @@ fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
     tray::update(app, waiting_count, menu_changed.then_some(&key));
     if let Err(err) = (GraphChanged { waiting_count }).emit(app) {
         tracing::warn!(%err, "failed to emit graph change");
+    }
+}
+
+/// Notifies about concerns that were not there at the last publish.
+fn notify_concerns(app: &AppHandle, snapshot: &agentscope_core::Snapshot) {
+    let runtime = app.state::<Runtime>();
+    let ids: std::collections::BTreeSet<String> =
+        snapshot.concerns.iter().map(|c| c.id.clone()).collect();
+    let fresh: Vec<_> = {
+        let mut seen = runtime.concerns.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = snapshot
+            .concerns
+            .iter()
+            .filter(|c| !seen.contains(&c.id))
+            .cloned()
+            .collect();
+        *seen = ids;
+        fresh
+    };
+    if !runtime.settings().notify_concerns {
+        return;
+    }
+    for concern in fresh {
+        let name = snapshot
+            .sessions
+            .iter()
+            .find(|s| s.id == concern.session_id)
+            .map(|s| {
+                s.title
+                    .clone()
+                    .unwrap_or_else(|| focus::display_dir(&s.cwd))
+            })
+            .unwrap_or_default();
+        if let Err(err) = app
+            .notification()
+            .builder()
+            .title(&name)
+            .body(&concern.message)
+            .show()
+        {
+            tracing::warn!(%err, "failed to show notification");
+        }
     }
 }
 

@@ -1,6 +1,7 @@
 import { ChevronRight, Clock, Cpu, FolderGit2, GitBranch, Network } from "lucide-react";
 
-import type { Agent, Session } from "../lib/types";
+import type { Agent, Concern, Session } from "../lib/types";
+import { ConcernLines } from "./Concerns";
 import { basename, elapsed, harnessNames, needsUser } from "../lib/format";
 import { GoToAgentButton } from "./GoToAgentButton";
 import { StatePill, stateTones } from "./StatePill";
@@ -14,9 +15,11 @@ export function SessionCard({
   agents,
   now,
   onOpen,
+  concerns = [],
 }: {
   session: Session;
   agents: Agent[];
+  concerns?: Concern[];
   now: number;
   onOpen: (sessionId: string) => void;
 }) {
@@ -88,6 +91,8 @@ export function SessionCard({
           {activity}
         </p>
       )}
+
+      <ConcernLines concerns={concerns} />
 
       {subagents.length > 0 && (
         <ul className="ml-1 flex flex-col gap-1 border-l border-line-soft pl-3">

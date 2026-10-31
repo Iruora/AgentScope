@@ -166,6 +166,16 @@ impl Engine {
         self.lock().graph.snapshot()
     }
 
+    /// Ids of the current concerns, to notice when they change between events.
+    pub fn concern_ids(&self) -> std::collections::BTreeSet<String> {
+        self.lock()
+            .graph
+            .concerns(Utc::now())
+            .into_iter()
+            .map(|c| c.id)
+            .collect()
+    }
+
     pub fn session(&self, id: &str) -> Option<Session> {
         self.lock().graph.session(id).cloned()
     }

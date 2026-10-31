@@ -12,7 +12,7 @@ use agentscope_core::{AgentEvent, EventKind, EventSource, HarnessId, Timestamp, 
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::summary::tool_summary;
+use crate::summary::{tool_files, tool_summary};
 use crate::TranscriptFile;
 
 fn str_of<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
@@ -146,6 +146,7 @@ pub fn parse(file: &TranscriptFile, bytes: &[u8]) -> Vec<AgentEvent> {
                 let kind = EventKind::ToolStarted {
                     tool: tool.to_owned(),
                     summary: tool_summary(tool, input, &cwd),
+                    files: tool_files(tool, input, &cwd),
                 };
                 push(agent, str_of(data, "toolCallId").map(str::to_owned), kind);
             }

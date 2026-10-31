@@ -375,7 +375,7 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: () =
   );
 }
 
-type NotifyKey = "notifyApprovals" | "notifyInput";
+type NotifyKey = "notifyApprovals" | "notifyInput" | "notifyConcerns";
 
 function NotificationsSection() {
   const settings = useSettings();
@@ -386,6 +386,11 @@ function NotificationsSection() {
   const options: [NotifyKey, string, string][] = [
     ["notifyApprovals", "An agent needs approval", "A permission prompt is waiting in a terminal."],
     ["notifyInput", "An agent is waiting for input", "It finished its turn or asked you a question."],
+    [
+      "notifyConcerns",
+      "An agent looks stuck or overlaps another",
+      "A tool has run for 10 minutes, the same command failed 3 times, a session went quiet, or two agents edit the same file.",
+    ],
   ];
   return (
     <SettingsCard icon={Bell} title="Notifications" description="Desktop notifications for the moments an agent is blocked on you.">

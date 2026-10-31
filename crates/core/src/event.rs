@@ -69,6 +69,9 @@ pub enum EventKind {
     ToolStarted {
         tool: String,
         summary: String,
+        /// Absolute paths the call writes (edit, create, delete, patch).
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        files: Vec<String>,
     },
     ToolFinished,
     ToolFailed {

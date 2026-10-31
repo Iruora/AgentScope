@@ -76,7 +76,14 @@ export function App() {
 
   let view;
   if (route.sessionId) {
-    view = <SessionDetail sessionId={route.sessionId} onBack={() => setRoute({ ...route, sessionId: undefined })} />;
+    view = (
+      <SessionDetail
+        key={route.sessionId}
+        sessionId={route.sessionId}
+        onBack={() => setRoute({ ...route, sessionId: undefined })}
+        onOpen={openSession}
+      />
+    );
   } else if (route.section === "Approvals") {
     view = <Approvals onOpen={openSession} />;
   } else if (route.section === "History") {

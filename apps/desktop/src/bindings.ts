@@ -48,6 +48,11 @@ export const commands = {
 	getUsage: (days: number) => typedError<UsageReport_Serialize, string>(__TAURI_INVOKE("get_usage", { days })),
 	/**  Estimated cost of each session that has a priced model. */
 	getCosts: () => __TAURI_INVOKE<{ [key in string]: number | null }>("get_costs"),
+	/**
+	 *  What changed in a file the session wrote, from `git diff`. Read-only, and
+	 *  only for files the session actually touched.
+	 */
+	getFileDiff: (sessionId: string, path: string) => typedError<FileDiff, string>(__TAURI_INVOKE("get_file_diff", { sessionId, path })),
 };
 
 /** Events */
@@ -142,6 +147,8 @@ export type Agent_Deserialize = {
 	startedAt: string,
 	endedAt?: string | null,
 	result?: AgentResult | null,
+	/**  The same tool call failing again and again. */
+	failures?: FailureStreak | null,
 };
 
 export type Agent_Serialize = {
@@ -158,6 +165,8 @@ export type Agent_Serialize = {
 	startedAt: string,
 	endedAt: string | null,
 	result: AgentResult | null,
+	/**  The same tool call failing again and again. */
+	failures: FailureStreak | null,
 };
 
 export type AppInfo = AppInfo_Serialize | AppInfo_Deserialize;
@@ -176,6 +185,49 @@ export type AppInfo_Serialize = {
 	/**  `None` until the ingest server is up, or if it failed to start. */
 	ingestPort: number | null,
 	harnesses: Detection_Serialize[],
+};
+
+/**  Something about a live session worth a look, worked out from the graph. */
+export type Concern = Concern_Serialize | Concern_Deserialize;
+
+export type ConcernKind = 
+/**  One tool call has run for a long time. */
+"long_tool" | 
+/**  The same tool call failed several times in a row. */
+"repeated_failure" | 
+/**  A working session has gone quiet. */
+"silent" | 
+/**  Another live session wrote the same file recently. */
+"conflict";
+
+/**  Something about a live session worth a look, worked out from the graph. */
+export type Concern_Deserialize = {
+	/**  Stable while the concern lasts, to notify once. */
+	id: string,
+	kind: ConcernKind,
+	sessionId: string,
+	agentId?: string | null,
+	/**  "Bash: npm test has run for 14 min" */
+	message: string,
+	since: string,
+	/**  For conflicts: the file and the other sessions writing it. */
+	path?: string | null,
+	otherSessionIds: string[],
+};
+
+/**  Something about a live session worth a look, worked out from the graph. */
+export type Concern_Serialize = {
+	/**  Stable while the concern lasts, to notify once. */
+	id: string,
+	kind: ConcernKind,
+	sessionId: string,
+	agentId: string | null,
+	/**  "Bash: npm test has run for 14 min" */
+	message: string,
+	since: string,
+	/**  For conflicts: the file and the other sessions writing it. */
+	path: string | null,
+	otherSessionIds: string[],
 };
 
 export type Confidence = "confirmed" | "inferred";
@@ -257,7 +309,9 @@ export type EventKind_Deserialize = { type: "sessionStarted"; cwd: string; model
 /**  A harness-provided name, preferred over the first prompt. */
 title?: string | null } | { type: "promptSubmitted"; prompt: string } | { type: "agentStarted"; 
 /**  Native id of the spawning agent; `None` means the main agent. */
-parent?: string | null; agentType?: string | null; description?: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error?: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail?: unknown | null; confidence: Confidence } | 
+parent?: string | null; agentType?: string | null; description?: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string; 
+/**  Absolute paths the call writes (edit, create, delete, patch). */
+files?: string[] } | { type: "toolFinished" } | { type: "toolFailed"; error?: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail?: unknown | null; confidence: Confidence } | 
 /**
  *  A tool call that may be waiting on a prompt the harness does not
  *  report (Cursor). If no result arrives within a few seconds it turns
@@ -277,7 +331,9 @@ export type EventKind_Serialize = { type: "sessionStarted"; cwd: string; model: 
 /**  A harness-provided name, preferred over the first prompt. */
 title: string | null } | { type: "promptSubmitted"; prompt: string } | { type: "agentStarted"; 
 /**  Native id of the spawning agent; `None` means the main agent. */
-parent: string | null; agentType: string | null; description: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string } | { type: "toolFinished" } | { type: "toolFailed"; error: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail: unknown | null; confidence: Confidence } | 
+parent: string | null; agentType: string | null; description: string | null } | { type: "agentStopped"; result: AgentResult } | { type: "toolStarted"; tool: string; summary: string; 
+/**  Absolute paths the call writes (edit, create, delete, patch). */
+files?: string[] } | { type: "toolFinished" } | { type: "toolFailed"; error: string | null } | { type: "approvalRequested"; approvalId: string; tool: string; summary: string; detail: unknown | null; confidence: Confidence } | 
 /**
  *  A tool call that may be waiting on a prompt the harness does not
  *  report (Cursor). If no result arrives within a few seconds it turns
@@ -292,6 +348,33 @@ approvalId: string | null; resolution: Resolution } | { type: "waitingForInput" 
 { type: "tokensUsed"; tokens: Tokens_Serialize } | { type: "heartbeat"; pid: number } | { type: "unknown"; event: string; raw: unknown };
 
 export type EventSource = "hook" | "transcript" | "scan" | "process";
+
+export type FailureStreak = {
+	summary: string,
+	count: number,
+	lastAt: string,
+};
+
+export type FileDiff = {
+	/**  Unified diff against the index and HEAD, empty when the file is unchanged. */
+	diff: string,
+	/**  Git does not track the file yet. */
+	untracked: boolean,
+	/**  The file is gone from disk. */
+	deleted: boolean,
+	truncated: boolean,
+};
+
+/**  A file an agent edited, created or deleted. */
+export type FileTouch = {
+	/**  Absolute path. */
+	path: string,
+	edits: number,
+	firstAt: string,
+	lastAt: string,
+	/**  The agent that touched it last. */
+	agentId: string,
+};
 
 export type GoToAgent = GoToAgent_Serialize | GoToAgent_Deserialize;
 
@@ -499,6 +582,11 @@ export type Session_Deserialize = {
 	transcriptPath?: string | null,
 	tokens?: Tokens_Deserialize | null,
 	rootAgentId: string,
+	/**
+	 *  Files the session's agents wrote, most recent first, capped at
+	 *  [`Session::MAX_FILES`].
+	 */
+	files?: FileTouch[],
 };
 
 export type Session_Serialize = {
@@ -519,6 +607,11 @@ export type Session_Serialize = {
 	transcriptPath: string | null,
 	tokens: Tokens_Serialize | null,
 	rootAgentId: string,
+	/**
+	 *  Files the session's agents wrote, most recent first, capped at
+	 *  [`Session::MAX_FILES`].
+	 */
+	files: FileTouch[],
 };
 
 export type Settings = Settings_Serialize | Settings_Deserialize;
@@ -548,6 +641,8 @@ export type Settings_Deserialize = {
 	confirmRisky?: boolean,
 	/**  Pop up a small always-on-top window when a prompt can be answered here. */
 	popupApprovals?: boolean,
+	/**  Notify about stuck tools, failure loops, quiet sessions and conflicts. */
+	notifyConcerns?: boolean,
 	/**  Phone push, off by default. */
 	push?: PushSettings_Deserialize,
 };
@@ -577,6 +672,8 @@ export type Settings_Serialize = {
 	confirmRisky: boolean,
 	/**  Pop up a small always-on-top window when a prompt can be answered here. */
 	popupApprovals: boolean,
+	/**  Notify about stuck tools, failure loops, quiet sessions and conflicts. */
+	notifyConcerns: boolean,
 	/**  Phone push, off by default. */
 	push: PushSettings_Serialize,
 };
@@ -593,6 +690,8 @@ export type Snapshot_Deserialize = {
 	approvals: PendingApproval_Deserialize[],
 	/**  Live sessions that need the user. Drives the tray badge. */
 	waitingCount: number,
+	/**  Stuck tools, failure loops, quiet sessions and file conflicts. */
+	concerns: Concern_Deserialize[],
 };
 
 /**  What the UI renders. */
@@ -604,6 +703,8 @@ export type Snapshot_Serialize = {
 	approvals: PendingApproval_Serialize[],
 	/**  Live sessions that need the user. Drives the tray badge. */
 	waitingCount: number,
+	/**  Stuck tools, failure loops, quiet sessions and file conflicts. */
+	concerns: Concern_Serialize[],
 };
 
 /**  Where the agent runs, for "Go to agent". Filled in by step 3. */

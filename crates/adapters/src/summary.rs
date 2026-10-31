@@ -77,6 +77,60 @@ pub fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
     truncate(&redact_text(&text.unwrap_or(name)), SUMMARY_MAX_CHARS)
 }
 
+/// Absolute paths a tool call writes: edits, new files, deletions and every
+/// file in an `apply_patch` envelope. Reads and shell commands write nothing
+/// we can see, so they return none.
+pub fn tool_files(tool: &str, input: &Value, cwd: &str) -> Vec<String> {
+    let absolute = |p: &str| -> String {
+        let path = Path::new(p.trim());
+        if path.is_absolute() || cwd.is_empty() {
+            path.display().to_string()
+        } else {
+            Path::new(cwd)
+                .join(path.strip_prefix("./").unwrap_or(path))
+                .display()
+                .to_string()
+        }
+    };
+    match tool.to_ascii_lowercase().as_str() {
+        "write" | "edit" | "multiedit" | "notebookedit" | "create" | "delete" | "edit_file"
+        | "write_file" | "search_replace" | "delete_file" => str_field(
+            input,
+            &["file_path", "notebook_path", "path", "target_file"],
+        )
+        .map(|p| vec![absolute(p)])
+        .unwrap_or_default(),
+        // Copilot's editor tool also views files.
+        "str_replace_editor" | "edit_tool" => {
+            if str_field(input, &["command"]) == Some("view") {
+                return Vec::new();
+            }
+            str_field(input, &["path", "file_path"])
+                .map(|p| vec![absolute(p)])
+                .unwrap_or_default()
+        }
+        "apply_patch" => str_field(input, &["command", "input", "patch"])
+            .map(|patch| patched_files(patch).map(absolute).collect())
+            .unwrap_or_default(),
+        _ => Vec::new(),
+    }
+}
+
+/// Every file an `apply_patch` envelope touches.
+fn patched_files(patch: &str) -> impl Iterator<Item = &str> {
+    patch.lines().filter_map(|l| {
+        [
+            "*** Update File: ",
+            "*** Add File: ",
+            "*** Delete File: ",
+            "*** Move to: ",
+        ]
+        .iter()
+        .find_map(|p| l.trim().strip_prefix(p))
+        .map(str::trim)
+    })
+}
+
 /// The first file an `apply_patch` envelope touches.
 fn patched_file(patch: &str) -> Option<&str> {
     patch.lines().find_map(|l| {
@@ -99,6 +153,35 @@ pub fn display_tool(tool: &str) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn finds_written_files() {
+        let cwd = "/repo";
+        assert_eq!(
+            tool_files("Edit", &json!({ "file_path": "/repo/src/app.ts" }), cwd),
+            ["/repo/src/app.ts"]
+        );
+        assert_eq!(
+            tool_files("create", &json!({ "path": "./notes.md" }), cwd),
+            ["/repo/notes.md"]
+        );
+        assert!(tool_files("Read", &json!({ "file_path": "/repo/a" }), cwd).is_empty());
+        assert!(tool_files("Bash", &json!({ "command": "rm a" }), cwd).is_empty());
+        assert!(tool_files(
+            "str_replace_editor",
+            &json!({ "command": "view", "path": "/repo/a" }),
+            cwd
+        )
+        .is_empty());
+        assert_eq!(
+            tool_files(
+                "apply_patch",
+                &json!({ "command": "*** Begin Patch\n*** Update File: src/a.rs\n@@\n*** Add File: /repo/b.rs\n" }),
+                cwd
+            ),
+            ["/repo/src/a.rs", "/repo/b.rs"]
+        );
+    }
 
     #[test]
     fn summarizes_common_tools() {

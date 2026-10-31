@@ -28,12 +28,31 @@ pub struct Session {
     pub transcript_path: Option<String>,
     pub tokens: Option<Tokens>,
     pub root_agent_id: String,
+    /// Files the session's agents wrote, most recent first, capped at
+    /// [`Session::MAX_FILES`].
+    #[serde(default)]
+    pub files: Vec<FileTouch>,
 }
 
 impl Session {
+    pub const MAX_FILES: usize = 300;
+
     pub fn key(harness: HarnessId, native_id: &str) -> String {
         format!("{harness}:{native_id}")
     }
+}
+
+/// A file an agent edited, created or deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FileTouch {
+    /// Absolute path.
+    pub path: String,
+    pub edits: u32,
+    pub first_at: Timestamp,
+    pub last_at: Timestamp,
+    /// The agent that touched it last.
+    pub agent_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
@@ -82,6 +101,17 @@ pub struct Agent {
     pub started_at: Timestamp,
     pub ended_at: Option<Timestamp>,
     pub result: Option<AgentResult>,
+    /// The same tool call failing again and again.
+    #[serde(default)]
+    pub failures: Option<FailureStreak>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct FailureStreak {
+    pub summary: String,
+    pub count: u32,
+    pub last_at: Timestamp,
 }
 
 impl Agent {
@@ -191,4 +221,34 @@ pub enum Resolution {
     Denied,
     Cancelled,
     Unknown,
+}
+
+/// Something about a live session worth a look, worked out from the graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Concern {
+    /// Stable while the concern lasts, to notify once.
+    pub id: String,
+    pub kind: ConcernKind,
+    pub session_id: String,
+    pub agent_id: Option<String>,
+    /// "Bash: npm test has run for 14 min"
+    pub message: String,
+    pub since: Timestamp,
+    /// For conflicts: the file and the other sessions writing it.
+    pub path: Option<String>,
+    pub other_session_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Type)]
+#[serde(rename_all = "snake_case")]
+pub enum ConcernKind {
+    /// One tool call has run for a long time.
+    LongTool,
+    /// The same tool call failed several times in a row.
+    RepeatedFailure,
+    /// A working session has gone quiet.
+    Silent,
+    /// Another live session wrote the same file recently.
+    Conflict,
 }
