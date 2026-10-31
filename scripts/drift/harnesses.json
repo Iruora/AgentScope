@@ -1,0 +1,23 @@
+{
+  "claude-code": {
+    "name": "Claude Code",
+    "package": "@anthropic-ai/claude-code",
+    "tested": "2.1",
+    "events": "crates/adapters/src/claude_code/hooks.rs",
+    "scan": { "spec": "@anthropic-ai/claude-code-linux-x64@{version}", "file": "package/claude" }
+  },
+  "codex": {
+    "name": "Codex",
+    "package": "@openai/codex",
+    "tested": "0.165",
+    "events": "crates/adapters/src/codex/hooks.rs",
+    "scan": { "spec": "@openai/codex@{version}-linux-x64", "file": "package/vendor/x86_64-unknown-linux-musl/bin/codex" }
+  },
+  "copilot-cli": {
+    "name": "Copilot CLI",
+    "package": "@github/copilot",
+    "tested": "1.0",
+    "events": "crates/adapters/src/copilot_cli/hooks.rs",
+    "scanNote": "Copilot CLI ships its code compressed inside the binary, so only the version is checked."
+  }
+}

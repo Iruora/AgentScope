@@ -163,10 +163,14 @@ pub fn get_settings(runtime: State<'_, Runtime>) -> Settings {
 #[tauri::command]
 #[specta::specta]
 pub fn set_settings(
+    app: AppHandle,
     engine: State<'_, Arc<Engine>>,
     runtime: State<'_, Runtime>,
     settings: Settings,
 ) -> Result<(), String> {
+    if settings.global_shortcut != runtime.settings().global_shortcut {
+        crate::hotkey::apply(&app, &settings.global_shortcut)?;
+    }
     crate::settings::save(&runtime.data_dir, &settings).map_err(|e| e.to_string())?;
     if settings.retention_days != runtime.settings().retention_days {
         engine
@@ -202,4 +206,58 @@ pub async fn install_update(app: AppHandle) -> Result<(), String> {
 pub fn open_release_page() -> Result<(), String> {
     tauri_plugin_opener::open_url(crate::updater::RELEASES_URL, None::<&str>)
         .map_err(|e| e.to_string())
+}
+
+fn diagnostics(engine: &Engine, runtime: &Runtime) -> crate::diagnostics::Diagnostics {
+    let shim = shim::path(&runtime.data_dir);
+    let snapshot = engine.snapshot();
+    let hook_status = |harness: HarnessId| {
+        shim.as_deref().map_or(HookStatus::NotInstalled, |s| {
+            engine.hooks_status(harness, s)
+        })
+    };
+    crate::diagnostics::collect(crate::diagnostics::Inputs {
+        detections: engine.detections(),
+        hook_status: &hook_status,
+        signals: engine.signals(),
+        snapshot: &snapshot,
+        data_dir: &runtime.data_dir,
+        ingest_port: runtime.ingest_port(),
+        shim_path: shim.as_ref().map(|p| p.display().to_string()),
+        recent_logs: crate::logbuf::recent(),
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_diagnostics(
+    engine: State<'_, Arc<Engine>>,
+    runtime: State<'_, Runtime>,
+) -> crate::diagnostics::Diagnostics {
+    diagnostics(&engine, &runtime)
+}
+
+/// Puts the redacted plain-text debug report on the clipboard and returns it.
+#[tauri::command]
+#[specta::specta]
+pub fn copy_debug_report(
+    app: AppHandle,
+    engine: State<'_, Arc<Engine>>,
+    runtime: State<'_, Runtime>,
+) -> Result<String, String> {
+    use tauri_plugin_clipboard_manager::ClipboardExt;
+    let report = crate::diagnostics::report(&diagnostics(&engine, &runtime));
+    app.clipboard()
+        .write_text(report.clone())
+        .map_err(|e| e.to_string())?;
+    Ok(report)
+}
+
+/// Where "Report a problem" sends people, with the debug report on the clipboard.
+const NEW_ISSUE_URL: &str = "https://github.com/Iruora/AgentScope/issues/new";
+
+#[tauri::command]
+#[specta::specta]
+pub fn open_new_issue() -> Result<(), String> {
+    tauri_plugin_opener::open_url(NEW_ISSUE_URL, None::<&str>).map_err(|e| e.to_string())
 }

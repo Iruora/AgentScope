@@ -1,11 +1,36 @@
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowDownToLine, Bell, History, Inbox, LayoutGrid, Moon, Radar, RefreshCw, Settings as SettingsIcon, Sun } from "lucide-react";
+import {
+  ArrowDownToLine,
+  Bell,
+  ClipboardCopy,
+  History,
+  Inbox,
+  LayoutGrid,
+  Moon,
+  Radar,
+  RefreshCw,
+  Search,
+  Settings as SettingsIcon,
+  Sun,
+} from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
+import { CommandPalette, modKey, type PaletteItem } from "./components/CommandPalette";
 import { Button, Dot, IconButton, cx } from "./components/ui";
-import { useGraphUpdates, useInstallUpdate, useOpenSessionRequests, useSettings, useSnapshot, useUpdate } from "./lib/api";
-import { countByFilter, filterLabels, filterTones, liveSessions, type SessionFilter } from "./lib/filters";
+import {
+  useCheckForUpdate,
+  useCopyDebugReport,
+  useGoToAgent,
+  useGraphUpdates,
+  useInstallUpdate,
+  useOpenSessionRequests,
+  useSettings,
+  useSnapshot,
+  useUpdate,
+} from "./lib/api";
+import { countByFilter, filterLabels, filterOf, filterTones, liveSessions, type SessionFilter } from "./lib/filters";
+import { basename, harnessNames, needsUser, stateLabels } from "./lib/format";
 import { useTheme } from "./lib/theme";
 import { useNow } from "./lib/useNow";
 import { Approvals } from "./views/Approvals";
@@ -30,6 +55,19 @@ export function App() {
   useOpenSessionRequests(openSession);
   const settings = useSettings();
   const go = (section: Section, filter: SessionFilter = "all") => setRoute({ section, filter });
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const paletteItems = usePaletteItems(go, openSession);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   if (settings.isPending) return null;
   if (settings.data && !settings.data.onboarded) return <Onboarding brand={<Brand />} />;
@@ -58,11 +96,89 @@ export function App() {
     <div className="grid h-screen grid-cols-[236px_minmax(0,1fr)]">
       <Sidebar route={route} go={go} />
       <div className="flex min-h-0 min-w-0 flex-col">
-        <Topbar onApprovals={() => go("Approvals")} />
+        <Topbar onApprovals={() => go("Approvals")} onSearch={() => setPaletteOpen(true)} />
         <main className="min-h-0 flex-1 overflow-y-auto px-7 py-6">{view}</main>
       </div>
+      {paletteOpen && <CommandPalette items={paletteItems} onClose={() => setPaletteOpen(false)} />}
     </div>
   );
+}
+
+/** Everything the command palette can jump to or do. */
+function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void, openSession: (id: string) => void): PaletteItem[] {
+  const snapshot = useSnapshot();
+  const goTo = useGoToAgent();
+  const checkUpdate = useCheckForUpdate();
+  const copyReport = useCopyDebugReport();
+  const queryClient = useQueryClient();
+  const [theme, toggleTheme] = useTheme();
+
+  const live = liveSessions(snapshot.data?.sessions);
+  const ordered = [...live.filter((s) => needsUser(s.state)), ...live.filter((s) => !needsUser(s.state))];
+  const sessions: PaletteItem[] = ordered.map((s) => {
+    const repo = s.repo ? basename(s.repo.root) : basename(s.cwd);
+    return {
+      id: `session:${s.id}`,
+      group: needsUser(s.state) ? "Needs you" : "Live sessions",
+      label: s.title ?? repo,
+      keywords: `${repo} ${s.repo?.branch ?? ""} ${s.cwd} ${s.model ?? ""}`,
+      detail: `${harnessNames[s.harness]} · ${repo}${s.repo?.branch ? ` · ${s.repo.branch}` : ""} · ${stateLabels[s.state]}`,
+      tone: filterTones[filterOf(s.state)],
+      run: () => openSession(s.id),
+      alt: () =>
+        void goTo.mutateAsync(s.id).then(
+          (r) => r.focused || openSession(s.id),
+          () => openSession(s.id),
+        ),
+    };
+  });
+
+  const views: PaletteItem[] = [
+    { id: "view:overview", group: "Go to", label: "Overview", icon: LayoutGrid, run: () => go("Overview") },
+    ...(Object.keys(filterLabels) as (keyof typeof filterLabels)[]).map((f) => ({
+      id: `view:filter:${f}`,
+      group: "Go to",
+      label: `Overview: ${filterLabels[f]}`,
+      tone: filterTones[f],
+      run: () => go("Overview", f),
+    })),
+    { id: "view:approvals", group: "Go to", label: "Approvals", icon: Inbox, run: () => go("Approvals") },
+    { id: "view:history", group: "Go to", label: "History", keywords: "ended past search", icon: History, run: () => go("History") },
+    { id: "view:settings", group: "Go to", label: "Settings", keywords: "integrations connect hooks notifications", icon: SettingsIcon, run: () => go("Settings") },
+  ];
+
+  const actions: PaletteItem[] = [
+    {
+      id: "action:theme",
+      group: "Actions",
+      label: theme === "dark" ? "Use light theme" : "Use dark theme",
+      keywords: "theme dark light appearance",
+      icon: theme === "dark" ? Sun : Moon,
+      run: toggleTheme,
+    },
+    { id: "action:refresh", group: "Actions", label: "Refresh", icon: RefreshCw, run: () => void queryClient.invalidateQueries() },
+    {
+      id: "action:update",
+      group: "Actions",
+      label: "Check for updates",
+      keywords: "version upgrade",
+      icon: ArrowDownToLine,
+      run: () => {
+        go("Settings");
+        checkUpdate.mutate();
+      },
+    },
+    {
+      id: "action:report",
+      group: "Actions",
+      label: "Copy debug report",
+      keywords: "diagnostics bug issue problem",
+      icon: ClipboardCopy,
+      run: () => copyReport.mutate(),
+    },
+  ];
+
+  return [...sessions, ...views, ...actions];
 }
 
 function Brand() {
@@ -220,7 +336,7 @@ function syncedText(updatedAt: number, now: number): string {
   return `Updated ${Math.floor(minutes / 60)}h ago`;
 }
 
-function Topbar({ onApprovals }: { onApprovals: () => void }) {
+function Topbar({ onApprovals, onSearch }: { onApprovals: () => void; onSearch: () => void }) {
   const queryClient = useQueryClient();
   const snapshot = useSnapshot();
   const now = useNow(5000);
@@ -239,6 +355,15 @@ function Topbar({ onApprovals }: { onApprovals: () => void }) {
         <span className="text-[11px] text-subtle">{syncedText(snapshot.dataUpdatedAt, now)}</span>
       </div>
       <div className="flex items-center gap-2.5">
+        <button
+          type="button"
+          onClick={onSearch}
+          className="flex h-[30px] items-center gap-2 rounded-[8px] border border-line bg-surface px-2.5 text-[12px] text-subtle transition-colors hover:bg-surface-2 hover:text-ink"
+        >
+          <Search size={14} aria-hidden />
+          <span>Search</span>
+          <kbd className="rounded-[5px] bg-surface-3 px-1.5 py-px font-sans text-[10px] font-semibold text-muted">{modKey} K</kbd>
+        </button>
         <IconButton
           icon={Bell}
           label={approvals ? `${approvals} waiting for approval` : "Approvals"}

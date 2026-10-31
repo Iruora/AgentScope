@@ -279,3 +279,11 @@ jobs:
             while read -r old; do gh api --method DELETE "repos/$GITHUB_REPOSITORY/releases/$old"; done
           gh api "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/untagged-" --jq '.[].ref' |
             while read -r ref; do gh api --method DELETE "repos/$GITHUB_REPOSITORY/git/$ref"; done
+
+  packages:
+    name: Package managers
+    needs: publish
+    uses: ./.github/workflows/packages.yml
+    with:
+      tag: ${{ inputs.tag || github.ref_name }}
+    secrets: inherit

@@ -4,6 +4,9 @@ export type Theme = "light" | "dark";
 
 const THEME_KEY = "agentscope.theme";
 
+/** Lets every `useTheme` user follow a toggle made by another (topbar, command palette). */
+const THEME_EVENT = "agentscope:theme";
+
 function stored(): Theme | null {
   try {
     const value = localStorage.getItem(THEME_KEY);
@@ -35,20 +38,23 @@ export function useTheme(): [Theme, () => void] {
     const onChange = () => {
       if (!stored()) setTheme(system());
     };
+    const onToggle = (e: Event) => setTheme((e as CustomEvent<Theme>).detail);
     query.addEventListener("change", onChange);
-    return () => query.removeEventListener("change", onChange);
+    window.addEventListener(THEME_EVENT, onToggle);
+    return () => {
+      query.removeEventListener("change", onChange);
+      window.removeEventListener(THEME_EVENT, onToggle);
+    };
   }, []);
 
   const toggle = useCallback(() => {
-    setTheme((current) => {
-      const next = current === "dark" ? "light" : "dark";
-      try {
-        localStorage.setItem(THEME_KEY, next);
-      } catch {
-        // The choice just won't be remembered.
-      }
-      return next;
-    });
+    const next: Theme = document.documentElement.dataset.theme === "dark" ? "light" : "dark";
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      // The choice just won't be remembered.
+    }
+    window.dispatchEvent(new CustomEvent<Theme>(THEME_EVENT, { detail: next }));
   }, []);
 
   return [theme, toggle];

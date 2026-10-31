@@ -15,7 +15,7 @@ use agentscope_core::{
     AgentEvent, AgentState, Changes, EventKind, EventSource, Graph, HarnessId, RawHookEvent,
     Session, Snapshot, Store,
 };
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 
 use crate::procs::Procs;
 
@@ -43,6 +43,19 @@ pub struct Engine {
     inner: Mutex<Inner>,
     procs: Mutex<Procs>,
     retention_days: AtomicU32,
+    signals: Mutex<HashMap<HarnessId, Signals>>,
+}
+
+/// What a harness has sent since the app started, for Diagnostics.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Signals {
+    pub hooks: u32,
+    /// Hook events the adapter did not turn into anything.
+    pub unhandled_hooks: u32,
+    pub last_hook_at: Option<DateTime<Utc>>,
+    pub last_hook_event: Option<String>,
+    pub transcript_events: u32,
+    pub last_transcript_at: Option<DateTime<Utc>>,
 }
 
 struct Inner {
@@ -111,6 +124,7 @@ impl Engine {
             }),
             procs: Mutex::new(Procs::new()),
             retention_days: AtomicU32::new(retention_days),
+            signals: Mutex::new(HashMap::new()),
         })
     }
 
@@ -195,6 +209,12 @@ impl Engine {
             return Outcome::default();
         };
         let mut events = adapter.normalize_hook(raw);
+        self.record(raw.harness, |s| {
+            s.hooks += 1;
+            s.unhandled_hooks += u32::from(events.is_empty());
+            s.last_hook_at = Some(Utc::now());
+            s.last_hook_event = Some(raw.event.clone());
+        });
         let Some(first) = events.first().cloned() else {
             tracing::debug!(harness = %raw.harness, event = %raw.event, "hook event not handled");
             return Outcome::default();
@@ -247,6 +267,12 @@ impl Engine {
                 offset: chunk.offset,
             };
             let events = adapter.parse_transcript_chunk(&file, &chunk.bytes);
+            if !events.is_empty() {
+                self.record(adapter.id(), |s| {
+                    s.transcript_events += u32::try_from(events.len()).unwrap_or(u32::MAX);
+                    s.last_transcript_at = Some(Utc::now());
+                });
+            }
             outcome.merge(self.apply(&events));
             let inner = self.lock();
             let offset = inner.tailer.offset(path);
@@ -497,6 +523,19 @@ impl Engine {
         }
     }
 
+    /// Per-harness signal counters since the app started.
+    pub fn signals(&self) -> HashMap<HarnessId, Signals> {
+        self.signals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+
+    fn record(&self, harness: HarnessId, update: impl FnOnce(&mut Signals)) {
+        let mut signals = self.signals.lock().unwrap_or_else(|e| e.into_inner());
+        update(signals.entry(harness).or_default());
+    }
+
     fn lock(&self) -> MutexGuard<'_, Inner> {
         // A panic while holding the lock leaves the graph usable; keep serving it.
         self.inner.lock().unwrap_or_else(|e| e.into_inner())
@@ -588,6 +627,25 @@ mod tests {
             ppid: Some(u32::MAX - 7),
             payload: serde_json::from_slice(&payload).unwrap(),
         }
+    }
+
+    #[test]
+    fn signals_count_hooks_per_harness() {
+        let dir = tempfile::tempdir().unwrap();
+        let engine = engine(dir.path(), &dir.path().join("db"));
+        engine.ingest(&hook("SessionStart"));
+        engine.ingest(&hook("PermissionRequest"));
+        let mut unknown = hook("Stop");
+        unknown.event = "SomethingNew".into();
+        unknown.payload = serde_json::json!({});
+        engine.ingest(&unknown);
+
+        let signals = engine.signals()[&HarnessId::ClaudeCode].clone();
+        assert_eq!(signals.hooks, 3);
+        assert_eq!(signals.unhandled_hooks, 1);
+        assert_eq!(signals.last_hook_event.as_deref(), Some("SomethingNew"));
+        assert!(signals.last_hook_at.is_some());
+        assert!(!engine.signals().contains_key(&HarnessId::Codex));
     }
 
     #[test]

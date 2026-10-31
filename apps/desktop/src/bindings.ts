@@ -26,6 +26,10 @@ export const commands = {
 	/**  Installs the pending update and restarts. Only returns on failure. */
 	installUpdate: () => typedError<null, string>(__TAURI_INVOKE("install_update")),
 	openReleasePage: () => typedError<null, string>(__TAURI_INVOKE("open_release_page")),
+	getDiagnostics: () => __TAURI_INVOKE<Diagnostics_Serialize>("get_diagnostics"),
+	/**  Puts the redacted plain-text debug report on the clipboard and returns it. */
+	copyDebugReport: () => typedError<string, string>(__TAURI_INVOKE("copy_debug_report")),
+	openNewIssue: () => typedError<null, string>(__TAURI_INVOKE("open_new_issue")),
 };
 
 /** Events */
@@ -176,6 +180,34 @@ export type Detection_Serialize = {
 	version: string | null,
 };
 
+export type Diagnostics = Diagnostics_Serialize | Diagnostics_Deserialize;
+
+export type Diagnostics_Deserialize = {
+	appVersion: string,
+	os: string,
+	dataDir: string,
+	ingestPort?: number | null,
+	shimPath?: string | null,
+	spoolFiles: number,
+	spoolBytes: number | null,
+	harnesses: HarnessDiagnostics_Deserialize[],
+	/**  Recent warnings and errors from the app's log, oldest first. */
+	recentLogs: string[],
+};
+
+export type Diagnostics_Serialize = {
+	appVersion: string,
+	os: string,
+	dataDir: string,
+	ingestPort: number | null,
+	shimPath: string | null,
+	spoolFiles: number,
+	spoolBytes: number | null,
+	harnesses: HarnessDiagnostics_Serialize[],
+	/**  Recent warnings and errors from the app's log, oldest first. */
+	recentLogs: string[],
+};
+
 /**  A config change shown to the user before it is written. */
 export type Diff = Diff_Serialize | Diff_Deserialize;
 
@@ -272,6 +304,40 @@ export type GoToAgent_Serialize = {
 /**  Emitted whenever the graph changes. The UI refetches the snapshot. */
 export type GraphChanged = {
 	waitingCount: number,
+};
+
+export type HarnessDiagnostics = HarnessDiagnostics_Serialize | HarnessDiagnostics_Deserialize;
+
+export type HarnessDiagnostics_Deserialize = {
+	harness: HarnessId,
+	installed: boolean,
+	version?: string | null,
+	testedVersion: string,
+	configDir?: string | null,
+	hookStatus: HookStatus,
+	hooksReceived: number,
+	unhandledHooks: number,
+	lastHookAt?: string | null,
+	lastHookEvent?: string | null,
+	transcriptEvents: number,
+	lastTranscriptAt?: string | null,
+	liveSessions: number,
+};
+
+export type HarnessDiagnostics_Serialize = {
+	harness: HarnessId,
+	installed: boolean,
+	version: string | null,
+	testedVersion: string,
+	configDir: string | null,
+	hookStatus: HookStatus,
+	hooksReceived: number,
+	unhandledHooks: number,
+	lastHookAt: string | null,
+	lastHookEvent: string | null,
+	transcriptEvents: number,
+	lastTranscriptAt: string | null,
+	liveSessions: number,
 };
 
 export type HarnessId = "claude-code" | "codex" | "copilot-cli" | "cursor";
@@ -414,6 +480,11 @@ export type Settings_Deserialize = {
 	onboarded?: boolean,
 	/**  Look for new versions on launch and every few hours. */
 	checkUpdates?: boolean,
+	/**
+	 *  Global shortcut that jumps to the agent waiting longest, e.g.
+	 *  `CommandOrControl+Shift+Y`. Empty when off.
+	 */
+	globalShortcut?: string,
 };
 
 export type Settings_Serialize = {
@@ -427,6 +498,11 @@ export type Settings_Serialize = {
 	onboarded: boolean,
 	/**  Look for new versions on launch and every few hours. */
 	checkUpdates: boolean,
+	/**
+	 *  Global shortcut that jumps to the agent waiting longest, e.g.
+	 *  `CommandOrControl+Shift+Y`. Empty when off.
+	 */
+	globalShortcut: string,
 };
 
 /**  What the UI renders. */

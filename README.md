@@ -27,6 +27,15 @@ The builds are not code signed yet, so macOS and Windows ask you to confirm once
 - **Windows:** when SmartScreen shows "Windows protected your PC", click **More info**, then **Run anyway**.
 - **Linux:** for the AppImage, run `chmod +x AgentScope_*.AppImage` and start it. For the `.deb`, run `sudo apt install ./AgentScope_*.deb`.
 
+Package managers, once they are set up for a release (see [docs/packages.md](docs/packages.md)):
+
+```sh
+brew install --cask iruora/agentscope/agentscope                                  # macOS
+winget install Iruora.AgentScope                                                  # Windows
+scoop bucket add agentscope https://github.com/Iruora/scoop-agentscope && scoop install agentscope
+yay -S agentscope-bin                                                             # Arch Linux
+```
+
 From version 1.1.0, AgentScope updates itself: when a new release is out it shows **Update and restart** in the sidebar and in Settings. Updates are signed, and the app checks the signature before installing. The portable Windows zip does not update in place; it links to the download page instead.
 
 ## Getting started
@@ -45,6 +54,8 @@ Ended sessions stay in **History** for 7 days by default; change it in **Setting
 To uninstall, disconnect each harness in Settings first, then delete the app. If you skip that, the leftover hooks simply do nothing.
 
 ## Documentation
+
+- Website: [iruora.github.io/AgentScope](https://iruora.github.io/AgentScope/) (source in `site/`)
 
 - [v1 spec](docs/SPEC.md)
 - [Harness research](docs/research/harnesses.md)
@@ -109,6 +120,9 @@ echo '{"session_id":"demo"}' | target/release/agentscope-hook --harness claude-c
    for every platform, attaches them to a draft release with a `latest.json` for
    the in-app updater, and (with **publish**) publishes it. Installed apps pick
    up the new version once the release is published.
+4. After publishing, the [Packages workflow](.github/workflows/packages.yml)
+   updates Homebrew, Scoop, winget and the AUR, each only once its secret is
+   set up ([docs/packages.md](docs/packages.md)).
 
 The updater files are signed with a key kept in two repository secrets,
 `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. The

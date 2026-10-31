@@ -1,6 +1,9 @@
 mod commands;
+mod diagnostics;
 mod engine;
 mod focus;
+mod hotkey;
+mod logbuf;
 mod procs;
 mod settings;
 mod shim;
@@ -76,6 +79,9 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::check_for_update,
             commands::install_update,
             commands::open_release_page,
+            commands::get_diagnostics,
+            commands::copy_debug_report,
+            commands::open_new_issue,
         ])
         .events(collect_events![
             GraphChanged,
@@ -96,10 +102,23 @@ fn export_bindings(builder: &tauri_specta::Builder<tauri::Wry>) {
 }
 
 pub fn run() {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "info,agentscope=debug".into()),
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::Layer;
+
+    tracing_subscriber::registry()
+        .with(
+            tracing_subscriber::fmt::layer().with_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| "info,agentscope=debug".into()),
+            ),
+        )
+        // Warnings and errors are also kept for Settings → Diagnostics.
+        .with(
+            tracing_subscriber::fmt::layer()
+                .with_ansi(false)
+                .with_writer(logbuf::RecentLogs)
+                .with_filter(tracing_subscriber::filter::LevelFilter::WARN),
         )
         .init();
 
@@ -111,6 +130,8 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app)
         }))
+        .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
@@ -155,6 +176,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     let data_dir = agentscope_protocol::data_dir().ok_or("could not find a data directory")?;
     std::fs::create_dir_all(&data_dir)?;
     let settings = settings::load(&data_dir);
+    let shortcut = settings.global_shortcut.clone();
     let engine = Arc::new(Engine::open(
         &data_dir.join("agentscope.db"),
         settings.retention_days,
@@ -170,6 +192,9 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     });
 
     tray::create(app)?;
+    if let Err(err) = hotkey::apply(app, &shortcut) {
+        tracing::warn!(%err, "global shortcut not registered");
+    }
     publish(
         app,
         &engine,

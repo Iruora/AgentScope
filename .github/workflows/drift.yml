@@ -1,0 +1,35 @@
+name: Harness drift
+
+# Weekly check that Claude Code, Codex and Copilot CLI have not changed in a
+# way that breaks AgentScope's adapters. Keeps one issue per harness labelled
+# `harness-drift`; see scripts/drift/drift.mjs.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1" # Mondays 06:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: harness-drift
+  cancel-in-progress: false
+
+jobs:
+  drift:
+    name: Check harness releases
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test scripts/drift/drift.test.mjs
+      - name: Check releases and update issues
+        run: node scripts/drift/drift.mjs --issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
