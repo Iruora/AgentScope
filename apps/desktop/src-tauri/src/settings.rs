@@ -26,6 +26,8 @@ pub struct Settings {
     pub decide_window_secs: u32,
     /// Ask for a second click before approving a command that looks risky.
     pub confirm_risky: bool,
+    /// Pop up a small always-on-top window when a prompt can be answered here.
+    pub popup_approvals: bool,
 }
 
 /// The decide windows Settings offers, in seconds.
@@ -55,6 +57,7 @@ impl Default for Settings {
             global_shortcut: String::new(),
             decide_window_secs: DEFAULT_DECIDE_WINDOW,
             confirm_risky: true,
+            popup_approvals: true,
         }
     }
 }
@@ -102,6 +105,7 @@ mod tests {
             global_shortcut: "CommandOrControl+Shift+Y".into(),
             decide_window_secs: 30,
             confirm_risky: false,
+            popup_approvals: false,
         };
         save(dir.path(), &off).unwrap();
         assert_eq!(load(dir.path()), off);

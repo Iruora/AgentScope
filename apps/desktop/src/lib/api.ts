@@ -175,3 +175,13 @@ export function useReleaseApproval() {
     onSettled: () => void queryClient.invalidateQueries({ queryKey: answerableKey }),
   });
 }
+
+/** Shows the main window on a session. */
+export function showSession(sessionId: string) {
+  return commands.showSession(sessionId);
+}
+
+/** Closes the approval popup until a new prompt arrives. */
+export function closePopup() {
+  return commands.closePopup();
+}

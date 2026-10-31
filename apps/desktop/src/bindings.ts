@@ -38,6 +38,10 @@ export const commands = {
 	answerApproval: (approvalId: string, allow: boolean) => typedError<null, string>(__TAURI_INVOKE("answer_approval", { approvalId, allow })),
 	/**  Hands a waiting prompt back to the harness, which then asks in the terminal. */
 	releaseApproval: (approvalId: string) => __TAURI_INVOKE<void>("release_approval", { approvalId }),
+	/**  Shows the main window on a session, e.g. from the approval popup. */
+	showSession: (sessionId: string) => __TAURI_INVOKE<void>("show_session", { sessionId }),
+	/**  Closes the approval popup until a new prompt arrives. */
+	closePopup: () => __TAURI_INVOKE<void>("close_popup"),
 };
 
 /** Events */
@@ -508,6 +512,8 @@ export type Settings_Deserialize = {
 	decideWindowSecs?: number,
 	/**  Ask for a second click before approving a command that looks risky. */
 	confirmRisky?: boolean,
+	/**  Pop up a small always-on-top window when a prompt can be answered here. */
+	popupApprovals?: boolean,
 };
 
 export type Settings_Serialize = {
@@ -533,6 +539,8 @@ export type Settings_Serialize = {
 	decideWindowSecs: number,
 	/**  Ask for a second click before approving a command that looks risky. */
 	confirmRisky: boolean,
+	/**  Pop up a small always-on-top window when a prompt can be answered here. */
+	popupApprovals: boolean,
 };
 
 /**  What the UI renders. */

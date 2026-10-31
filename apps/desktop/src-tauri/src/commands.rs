@@ -291,6 +291,11 @@ pub fn get_answerable(decisions: State<'_, crate::decide::Decisions>) -> Vec<Str
 #[tauri::command]
 #[specta::specta]
 pub fn answer_approval(app: AppHandle, approval_id: String, allow: bool) -> Result<(), String> {
+    answer(&app, &approval_id, allow)
+}
+
+/// Sends the user's answer to a waiting prompt and marks it resolved.
+pub(crate) fn answer(app: &AppHandle, approval_id: &str, allow: bool) -> Result<(), String> {
     use agentscope_core::{Decision, Resolution};
     let decision = if allow {
         Decision::Allow
@@ -301,9 +306,9 @@ pub fn answer_approval(app: AppHandle, approval_id: String, allow: bool) -> Resu
     };
     if !app
         .state::<crate::decide::Decisions>()
-        .answer(&approval_id, decision)
+        .answer(approval_id, decision)
     {
-        crate::publish_changed(&app);
+        crate::publish_changed(app);
         return Err("This prompt is no longer waiting here. Answer it in the terminal.".to_owned());
     }
     tracing::info!(%approval_id, allow, "answered a permission prompt");
@@ -313,9 +318,9 @@ pub fn answer_approval(app: AppHandle, approval_id: String, allow: bool) -> Resu
     } else {
         Resolution::Denied
     };
-    let mut outcome = engine.resolve_approval(&approval_id, resolution);
+    let mut outcome = engine.resolve_approval(approval_id, resolution);
     outcome.changed = true;
-    crate::publish_outcome(&app, &engine, outcome);
+    crate::publish_outcome(app, &engine, outcome);
     Ok(())
 }
 
@@ -329,4 +334,18 @@ pub fn release_approval(app: AppHandle, approval_id: String) {
     {
         crate::publish_changed(&app);
     }
+}
+
+/// Shows the main window on a session, e.g. from the approval popup.
+#[tauri::command]
+#[specta::specta]
+pub fn show_session(app: AppHandle, session_id: String) {
+    crate::open_session(&app, &session_id);
+}
+
+/// Closes the approval popup until a new prompt arrives.
+#[tauri::command]
+#[specta::specta]
+pub fn close_popup(app: AppHandle) {
+    crate::popup::close(&app);
 }

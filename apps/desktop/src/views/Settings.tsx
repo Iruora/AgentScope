@@ -730,6 +730,19 @@ function AnsweringSection() {
             label="Confirm risky commands"
           />
         </li>
+        <li className="flex items-center justify-between gap-4 px-5 py-3.5">
+          <span>
+            <span className="block text-[13px] font-semibold text-ink">Pop up a small window</span>
+            <span className="mt-0.5 block text-[11px] text-muted">
+              A prompt you can answer here opens a small window in the corner of the screen. It never takes focus from what you are typing.
+            </span>
+          </span>
+          <Switch
+            checked={current.popupApprovals}
+            onChange={() => save.mutate({ ...current, popupApprovals: !current.popupApprovals })}
+            label="Pop up a small window"
+          />
+        </li>
       </ul>
       {save.isError && (
         <div className="px-5 pb-4">

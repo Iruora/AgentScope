@@ -58,6 +58,7 @@ dependencies = [
  "agentscope-protocol",
  "chrono",
  "notify",
+ "regex",
  "serde",
  "serde_json",
  "specta",

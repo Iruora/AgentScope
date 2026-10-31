@@ -5,7 +5,9 @@ mod engine;
 mod focus;
 mod hotkey;
 mod logbuf;
+mod popup;
 mod procs;
+mod risky;
 mod settings;
 mod shim;
 mod tray;
@@ -86,6 +88,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_answerable,
             commands::answer_approval,
             commands::release_approval,
+            commands::show_session,
+            commands::close_popup,
         ])
         .events(collect_events![
             GraphChanged,
@@ -193,7 +197,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         data_dir: data_dir.clone(),
         ingest_port: Mutex::new(None),
         notified: Mutex::new(HashMap::new()),
-        tray_menu: Mutex::new(Vec::new()),
+        tray_menu: Mutex::new(tray::MenuKey::default()),
     });
 
     tray::create(app)?;
@@ -405,10 +409,14 @@ fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
     }
     let snapshot = engine.snapshot();
     let open = snapshot.approvals.iter().map(|a| a.id.clone()).collect();
-    app.state::<decide::Decisions>().retain_open(&open);
+    let decisions = app.state::<decide::Decisions>();
+    decisions.retain_open(&open);
+    let answerable = decisions.ids();
     let waiting_count = snapshot.waiting_count;
     let runtime = app.state::<Runtime>();
-    let key = tray::menu_key(&snapshot);
+    let settings = runtime.settings();
+    popup::sync(app, &answerable, settings.popup_approvals);
+    let key = tray::menu_key(&snapshot, &answerable, settings.confirm_risky);
     let menu_changed = {
         let mut last = runtime.tray_menu.lock().unwrap_or_else(|e| e.into_inner());
         let changed = *last != key;

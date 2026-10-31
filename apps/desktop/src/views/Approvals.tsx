@@ -153,7 +153,7 @@ function ApprovalRow({
   );
 }
 
-function AnswerButtons({ approvalId, risky }: { approvalId: string; risky: boolean }) {
+export function AnswerButtons({ approvalId, risky }: { approvalId: string; risky: boolean }) {
   const answer = useAnswerApproval();
   const release = useReleaseApproval();
   const [confirming, setConfirming] = useState(false);
