@@ -2,7 +2,7 @@ import { Bot, CircleAlert, Folder, Hand, Layers, Loader, MessageCircle, Moon, Ne
 import type { LucideIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 
-import type { Agent, AppInfo, Session } from "../lib/types";
+import type { Agent, AppInfo, Session, SessionLabel } from "../lib/types";
 import { SessionCard } from "../components/SessionCard";
 import {
   Button,
@@ -19,7 +19,8 @@ import {
   cx,
   type Tone,
 } from "../components/ui";
-import { useAppInfo, useSnapshot } from "../lib/api";
+import { useAppInfo, useLabels, useSnapshot } from "../lib/api";
+import { LabelChips, labelText, matchesLabel, pinnedFirst, type LabelFilter } from "../components/Labels";
 import {
   countByFilter,
   filterLabels,
@@ -48,9 +49,9 @@ function groupKey(session: Session, by: GroupBy): string {
   return session.repo?.root || session.cwd || "Unknown location";
 }
 
-function matchesSearch(session: Session, query: string): boolean {
+function matchesSearch(session: Session, query: string, label?: SessionLabel): boolean {
   if (!query) return true;
-  const haystack = [session.title, session.cwd, session.repo?.branch, session.model, harnessNames[session.harness]]
+  const haystack = [session.title, session.cwd, session.repo?.branch, session.model, harnessNames[session.harness], labelText(label)]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -72,6 +73,8 @@ export function Overview({
   const now = useNow(10_000);
   const [groupBy, setGroupBy] = useState<GroupBy>(loadGroupBy);
   const [query, setQuery] = useState("");
+  const [labelFilter, setLabelFilter] = useState<LabelFilter>(null);
+  const labels = useLabels().data;
 
   const chooseGroupBy = (by: GroupBy) => {
     setGroupBy(by);
@@ -96,7 +99,15 @@ export function Overview({
   ).length;
   const folders = new Set(live.map((s) => s.repo?.root || s.cwd)).size;
 
-  const visible = live.filter((s) => (filter === "all" || filterOf(s.state) === filter) && matchesSearch(s, query));
+  const visible = pinnedFirst(
+    live.filter(
+      (s) =>
+        (filter === "all" || filterOf(s.state) === filter) &&
+        matchesLabel(labelFilter, labels?.get(s.id)) &&
+        matchesSearch(s, query, labels?.get(s.id)),
+    ),
+    labels,
+  );
   const needsYou = visible.filter((s) => needsUser(s.state));
   const grouped = new Map<string, Session[]>();
   for (const s of visible.filter((s) => !needsUser(s.state))) {
@@ -111,6 +122,7 @@ export function Overview({
       session={s}
       agents={agentsBySession.get(s.id) ?? []}
       concerns={(snapshot.data?.concerns ?? []).filter((c) => c.sessionId === s.id)}
+      label={labels?.get(s.id)}
       now={now}
       onOpen={onOpen}
     />
@@ -159,7 +171,7 @@ export function Overview({
                   type="search"
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search title, folder or branch"
+                  placeholder="Search title, folder, branch or tag"
                   aria-label="Search sessions"
                   className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-subtle [&::-webkit-search-cancel-button]:hidden"
                 />
@@ -209,12 +221,14 @@ export function Overview({
                 <span className="text-subtle">{counts[f]}</span>
               </button>
             ))}
-            {(filter !== "all" || query) && (
+            <LabelChips ids={live.map((s) => s.id)} labels={labels} value={labelFilter} onChange={setLabelFilter} />
+            {(filter !== "all" || query || labelFilter) && (
               <button
                 type="button"
                 onClick={() => {
                   onFilter("all");
                   setQuery("");
+                  setLabelFilter(null);
                 }}
                 className="ml-1 text-[11px] font-semibold text-accent-text hover:underline"
               >

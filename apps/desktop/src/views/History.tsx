@@ -2,13 +2,14 @@ import { ChevronRight, CircleAlert, Clock, Coins, FolderGit2, History as History
 import { useMemo, useState } from "react";
 
 import { Card, Code, EmptyState, Label, Notice, PageIntro, cx } from "../components/ui";
-import { useCosts, useSettings, useSnapshot } from "../lib/api";
+import { sessionTitle, useCosts, useLabels, useSettings, useSnapshot } from "../lib/api";
+import { LabelBadges, LabelChips, labelText, matchesLabel, pinnedFirst, type LabelFilter } from "../components/Labels";
 import { basename, compactNumber, elapsed, harnessNames, usd } from "../lib/format";
-import type { HarnessId, Session } from "../lib/types";
+import type { HarnessId, Session, SessionLabel } from "../lib/types";
 
-function matchesSearch(session: Session, query: string): boolean {
+function matchesSearch(session: Session, query: string, label?: SessionLabel): boolean {
   if (!query) return true;
-  const haystack = [session.title, session.cwd, session.repo?.root, session.repo?.branch, session.model]
+  const haystack = [session.title, session.cwd, session.repo?.root, session.repo?.branch, session.model, labelText(label)]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
@@ -30,6 +31,8 @@ export function History({ onOpen }: { onOpen: (sessionId: string) => void }) {
   const settings = useSettings();
   const [query, setQuery] = useState("");
   const [harness, setHarness] = useState<HarnessId | null>(null);
+  const [labelFilter, setLabelFilter] = useState<LabelFilter>(null);
+  const labels = useLabels().data;
 
   const ended = useMemo(
     () =>
@@ -47,10 +50,18 @@ export function History({ onOpen }: { onOpen: (sessionId: string) => void }) {
   }, [snapshot.data]);
 
   const harnesses = [...new Set(ended.map((s) => s.harness))];
-  const visible = ended.filter((s) => (harness === null || s.harness === harness) && matchesSearch(s, query));
+  const visible = ended.filter(
+    (s) =>
+      (harness === null || s.harness === harness) &&
+      matchesLabel(labelFilter, labels?.get(s.id)) &&
+      matchesSearch(s, query, labels?.get(s.id)),
+  );
   const now = new Date();
   const days = new Map<string, typeof visible>();
-  for (const s of visible) {
+  // Pinned sessions get their own group on top; they may be older than retention.
+  const pinned = pinnedFirst(visible, labels).filter((s) => labels?.get(s.id)?.pinned);
+  if (pinned.length > 0) days.set("Pinned", pinned);
+  for (const s of visible.filter((s) => !labels?.get(s.id)?.pinned)) {
     const label = dayLabel(s.endedAt, now);
     days.set(label, [...(days.get(label) ?? []), s]);
   }
@@ -81,7 +92,7 @@ export function History({ onOpen }: { onOpen: (sessionId: string) => void }) {
               type="search"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search title, repo, folder or branch"
+              placeholder="Search title, repo, branch or tag"
               aria-label="Search history"
               className="min-w-0 flex-1 bg-transparent text-[12px] outline-none placeholder:text-subtle [&::-webkit-search-cancel-button]:hidden"
             />
@@ -108,6 +119,7 @@ export function History({ onOpen }: { onOpen: (sessionId: string) => void }) {
                 {h ? harnessNames[h] : "All harnesses"}
               </button>
             ))}
+          <LabelChips ids={ended.map((s) => s.id)} labels={labels} value={labelFilter} onChange={setLabelFilter} />
         </div>
       )}
 
@@ -119,7 +131,7 @@ export function History({ onOpen }: { onOpen: (sessionId: string) => void }) {
           <Card className="overflow-hidden">
             <ul className="divide-y divide-line-soft">
               {sessions.map((s) => (
-                <HistoryRow key={s.id} session={s} subagents={subagentCounts.get(s.id) ?? 0} onOpen={onOpen} />
+                <HistoryRow key={s.id} session={s} label={labels?.get(s.id)} subagents={subagentCounts.get(s.id) ?? 0} onOpen={onOpen} />
               ))}
             </ul>
           </Card>
@@ -143,10 +155,12 @@ export function History({ onOpen }: { onOpen: (sessionId: string) => void }) {
 
 function HistoryRow({
   session,
+  label,
   subagents,
   onOpen,
 }: {
   session: Session & { endedAt: string };
+  label?: SessionLabel;
   subagents: number;
   onOpen: (sessionId: string) => void;
 }) {
@@ -167,9 +181,10 @@ function HistoryRow({
               {basename(folder)}
             </span>
           </div>
-          <p className="mt-0.5 truncate text-[13px] font-semibold text-ink group-hover:text-accent-text">
-            {session.title ?? "Untitled session"}
-          </p>
+          <div className="mt-0.5 flex min-w-0 items-center gap-2">
+            <p className="truncate text-[13px] font-semibold text-ink group-hover:text-accent-text">{sessionTitle(session, label)}</p>
+            <LabelBadges label={label} className="shrink-0" />
+          </div>
           <div className="mt-1 flex min-w-0 items-center gap-1.5 text-[11px] text-subtle">
             <FolderGit2 size={12} className="shrink-0" aria-hidden />
             <Code className="max-w-96">{session.repo?.branch ?? session.cwd}</Code>
@@ -196,7 +211,9 @@ function HistoryRow({
             {elapsed(session.startedAt, Date.parse(session.endedAt))}
           </span>
           <span className="w-16 text-right whitespace-nowrap text-subtle">
-            {new Date(session.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+            {label?.pinned
+              ? new Date(session.endedAt).toLocaleDateString([], { month: "short", day: "numeric" })
+              : new Date(session.endedAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
           </span>
           <ChevronRight size={14} className="text-subtle group-hover:text-accent-text" aria-hidden />
         </div>

@@ -22,6 +22,7 @@ export type {
   PushService,
   PushSettings_Serialize as PushSettings,
   Session_Serialize as Session,
+  SessionLabel_Serialize as SessionLabel,
   Settings_Serialize as Settings,
   Snapshot_Serialize as Snapshot,
   Tokens_Serialize as Tokens,

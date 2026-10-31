@@ -1,6 +1,8 @@
 import { ChevronRight, Clock, Cpu, FolderGit2, GitBranch, Network } from "lucide-react";
 
-import type { Agent, Concern, Session } from "../lib/types";
+import type { Agent, Concern, Session, SessionLabel } from "../lib/types";
+import { sessionTitle } from "../lib/api";
+import { LabelBadges } from "./Labels";
 import { ConcernLines } from "./Concerns";
 import { basename, elapsed, harnessNames, needsUser } from "../lib/format";
 import { GoToAgentButton } from "./GoToAgentButton";
@@ -16,7 +18,9 @@ export function SessionCard({
   now,
   onOpen,
   concerns = [],
+  label,
 }: {
+  label?: SessionLabel;
   session: Session;
   agents: Agent[];
   concerns?: Concern[];
@@ -29,12 +33,13 @@ export function SessionCard({
   const activity = main?.currentActivity?.summary ?? busySub?.currentActivity?.summary;
   const attention = needsUser(session.state);
   const folder = session.repo?.root ?? session.cwd;
+  const title = sessionTitle(session, label);
 
   return (
     <article
       role="button"
       tabIndex={0}
-      aria-label={`Open ${session.title ?? "untitled session"}`}
+      aria-label={`Open ${title}`}
       onClick={() => onOpen(session.id)}
       onKeyDown={(e) => {
         if (e.target !== e.currentTarget) return;
@@ -62,9 +67,12 @@ export function SessionCard({
         )}
       </div>
 
-      <h3 className="truncate text-[14px] leading-snug font-semibold text-ink group-hover:text-accent-text">
-        {session.title ?? "Untitled session"}
-      </h3>
+      <div className="flex min-w-0 items-center gap-2">
+        <h3 className="truncate text-[14px] leading-snug font-semibold text-ink group-hover:text-accent-text" title={label?.name ? (session.title ?? undefined) : undefined}>
+          {title}
+        </h3>
+        <LabelBadges label={label} className="shrink-0" />
+      </div>
 
       <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-subtle">
         {session.repo?.branch ? (

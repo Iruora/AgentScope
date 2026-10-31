@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { commands, events } from "../bindings";
-import type { HarnessId, PushSettings, Settings, UpdateInfo } from "./types";
+import type { HarnessId, PushSettings, Session, SessionLabel, Settings, UpdateInfo } from "./types";
 
 const snapshotKey = ["snapshot"] as const;
 const answerableKey = ["answerable"] as const;
@@ -211,4 +211,36 @@ export function useFileDiff(sessionId: string, path: string | null) {
     enabled: path != null,
     staleTime: 0,
   });
+}
+
+const labelsKey = ["labels"] as const;
+
+/** Pins, names, tags and notes, by session id. */
+export function useLabels() {
+  return useQuery({
+    queryKey: labelsKey,
+    queryFn: async () => new Map((await unwrap(commands.getLabels())).map((l) => [l.sessionId, l])),
+  });
+}
+
+/** Saves a session's label. The saved, cleaned up label replaces the cached one. */
+export function useSetLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (label: SessionLabel) => unwrap(commands.setLabel(label)),
+    onSuccess: (saved) => {
+      queryClient.setQueryData<Map<string, SessionLabel>>(labelsKey, (old) => {
+        const next = new Map(old);
+        const empty = !saved.pinned && !saved.name && saved.tags.length === 0 && !saved.note;
+        if (empty) next.delete(saved.sessionId);
+        else next.set(saved.sessionId, saved);
+        return next;
+      });
+    },
+  });
+}
+
+/** The user's name for a session, else the harness's title. */
+export function sessionTitle(session: Session, label?: SessionLabel): string {
+  return label?.name ?? session.title ?? "Untitled session";
 }

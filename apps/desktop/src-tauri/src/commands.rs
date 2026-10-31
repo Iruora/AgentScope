@@ -415,3 +415,22 @@ pub async fn get_file_diff(
     .await
     .map_err(|e| e.to_string())?
 }
+
+/// Pins, names, tags and notes the user added to sessions.
+#[tauri::command]
+#[specta::specta]
+pub fn get_labels(
+    engine: State<'_, Arc<Engine>>,
+) -> Result<Vec<agentscope_core::SessionLabel>, String> {
+    engine.labels().map_err(|e| e.to_string())
+}
+
+/// Saves one session's label and returns it cleaned up.
+#[tauri::command]
+#[specta::specta]
+pub fn set_label(
+    engine: State<'_, Arc<Engine>>,
+    label: agentscope_core::SessionLabel,
+) -> Result<agentscope_core::SessionLabel, String> {
+    engine.set_label(&label).map_err(|e| e.to_string())
+}

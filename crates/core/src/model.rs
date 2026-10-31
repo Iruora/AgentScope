@@ -252,3 +252,58 @@ pub enum ConcernKind {
     /// Another live session wrote the same file recently.
     Conflict,
 }
+
+/// What the user added to a session. Pinned sessions are kept past retention.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize, Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLabel {
+    pub session_id: String,
+    #[serde(default)]
+    pub pinned: bool,
+    /// Shown instead of the harness's title.
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+impl SessionLabel {
+    pub const MAX_TAGS: usize = 12;
+    pub const MAX_TAG_LEN: usize = 32;
+    pub const MAX_NAME_LEN: usize = 120;
+    pub const MAX_NOTE_LEN: usize = 4000;
+
+    /// Trims text, drops blanks, lowercases and dedupes tags, and caps lengths.
+    pub fn cleaned(mut self) -> Self {
+        fn text(value: Option<String>, max: usize) -> Option<String> {
+            let value = value?.trim().chars().take(max).collect::<String>();
+            (!value.is_empty()).then_some(value)
+        }
+        self.name = text(self.name, Self::MAX_NAME_LEN);
+        self.note = text(self.note, Self::MAX_NOTE_LEN);
+        let mut tags: Vec<String> = Vec::new();
+        for tag in self.tags {
+            let tag: String = tag
+                .trim()
+                .trim_start_matches('#')
+                .to_lowercase()
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join("-")
+                .chars()
+                .take(Self::MAX_TAG_LEN)
+                .collect();
+            if !tag.is_empty() && !tags.contains(&tag) && tags.len() < Self::MAX_TAGS {
+                tags.push(tag);
+            }
+        }
+        self.tags = tags;
+        self
+    }
+
+    pub fn is_empty(&self) -> bool {
+        !self.pinned && self.name.is_none() && self.tags.is_empty() && self.note.is_none()
+    }
+}

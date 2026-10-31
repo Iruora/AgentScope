@@ -157,9 +157,23 @@ impl Engine {
         let mut inner = self.lock();
         let pruned = inner.store.prune(retention)?;
         if pruned > 0 {
-            inner.graph.forget_ended_before(Utc::now() - retention);
+            let keep = inner.store.pinned()?;
+            inner
+                .graph
+                .forget_ended_before(Utc::now() - retention, &keep);
         }
         Ok(())
+    }
+
+    pub fn labels(&self) -> Result<Vec<agentscope_core::SessionLabel>, StoreError> {
+        self.lock().store.labels()
+    }
+
+    pub fn set_label(
+        &self,
+        label: &agentscope_core::SessionLabel,
+    ) -> Result<agentscope_core::SessionLabel, StoreError> {
+        self.lock().store.set_label(label)
     }
 
     pub fn snapshot(&self) -> Snapshot {

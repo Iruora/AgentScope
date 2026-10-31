@@ -111,11 +111,11 @@ impl Graph {
 
     /// Drops ended sessions last active before `cutoff`, with their agents
     /// and approvals, as [`crate::Store::prune`] does on disk.
-    pub fn forget_ended_before(&mut self, cutoff: Timestamp) {
+    pub fn forget_ended_before(&mut self, cutoff: Timestamp, keep: &HashSet<String>) {
         let old: HashSet<String> = self
             .sessions
             .values()
-            .filter(|s| s.ended_at.is_some() && s.last_event_at < cutoff)
+            .filter(|s| s.ended_at.is_some() && s.last_event_at < cutoff && !keep.contains(&s.id))
             .map(|s| s.id.clone())
             .collect();
         if old.is_empty() {
@@ -1235,19 +1235,20 @@ mod tests {
             },
         );
         let cutoff = s.session().last_event_at + Duration::days(1);
-        s.graph.forget_ended_before(cutoff);
+        s.graph.forget_ended_before(cutoff, &HashSet::new());
         assert!(
             s.graph.session("claude-code:s1").is_some(),
             "live sessions stay"
         );
 
         s.apply(None, EventKind::SessionEnded);
-        s.graph.forget_ended_before(s.session().last_event_at);
+        s.graph
+            .forget_ended_before(s.session().last_event_at, &HashSet::new());
         assert!(
             s.graph.session("claude-code:s1").is_some(),
             "recent ones stay"
         );
-        s.graph.forget_ended_before(cutoff);
+        s.graph.forget_ended_before(cutoff, &HashSet::new());
         assert!(s.graph.session("claude-code:s1").is_none());
         assert!(s.graph.snapshot().agents.is_empty());
     }

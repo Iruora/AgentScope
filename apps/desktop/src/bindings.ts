@@ -53,6 +53,10 @@ export const commands = {
 	 *  only for files the session actually touched.
 	 */
 	getFileDiff: (sessionId: string, path: string) => typedError<FileDiff, string>(__TAURI_INVOKE("get_file_diff", { sessionId, path })),
+	/**  Pins, names, tags and notes the user added to sessions. */
+	getLabels: () => typedError<SessionLabel_Serialize[], string>(__TAURI_INVOKE("get_labels")),
+	/**  Saves one session's label and returns it cleaned up. */
+	setLabel: (label: SessionLabel_Deserialize) => typedError<SessionLabel_Serialize, string>(__TAURI_INVOKE("set_label", { label })),
 };
 
 /** Events */
@@ -563,6 +567,29 @@ export type Repo_Serialize = {
 export type Resolution = "approved" | "denied" | "cancelled" | "unknown";
 
 export type Session = Session_Serialize | Session_Deserialize;
+
+/**  What the user added to a session. Pinned sessions are kept past retention. */
+export type SessionLabel = SessionLabel_Serialize | SessionLabel_Deserialize;
+
+/**  What the user added to a session. Pinned sessions are kept past retention. */
+export type SessionLabel_Deserialize = {
+	sessionId: string,
+	pinned?: boolean,
+	/**  Shown instead of the harness's title. */
+	name?: string | null,
+	tags?: string[],
+	note?: string | null,
+};
+
+/**  What the user added to a session. Pinned sessions are kept past retention. */
+export type SessionLabel_Serialize = {
+	sessionId: string,
+	pinned: boolean,
+	/**  Shown instead of the harness's title. */
+	name: string | null,
+	tags: string[],
+	note: string | null,
+};
 
 export type Session_Deserialize = {
 	/**  `${harness}:${nativeSessionId}` */

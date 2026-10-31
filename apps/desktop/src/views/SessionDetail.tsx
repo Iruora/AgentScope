@@ -1,13 +1,14 @@
-import { ArrowLeft, ChevronRight, CircleAlert, FilePen, FileText, Network } from "lucide-react";
+import { ArrowLeft, ChevronRight, CircleAlert, FilePen, FileText, Network, Pencil, Pin, StickyNote } from "lucide-react";
 import { useMemo, useState } from "react";
 
 import { concernIcons, concernTitles } from "../components/Concerns";
 import { GoToAgentButton } from "../components/GoToAgentButton";
 import { StatePill, stateTones } from "../components/StatePill";
 import { Button, Card, Code, Dot, Label, Notice, cx, toneSolid, type Tone } from "../components/ui";
-import { revealTranscript, useCosts, useFileDiff, useSessionEvents, useSnapshot } from "../lib/api";
+import { revealTranscript, sessionTitle, useCosts, useFileDiff, useLabels, useSessionEvents, useSetLabel, useSnapshot } from "../lib/api";
+import { LabelBadges } from "../components/Labels";
 import { basename, clockTime, compactNumber, elapsed, harnessNames, usd } from "../lib/format";
-import type { Agent, AgentEvent, Concern, FileTouch, Session } from "../lib/types";
+import type { Agent, AgentEvent, Concern, FileTouch, Session, SessionLabel } from "../lib/types";
 
 export function SessionDetail({
   sessionId,
@@ -114,7 +115,11 @@ function BackButton({ onBack }: { onBack: () => void }) {
 
 function Header({ session }: { session: Session }) {
   const costs = useCosts();
+  const label = useLabels().data?.get(session.id);
+  const setLabel = useSetLabel();
+  const [editing, setEditing] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const current: SessionLabel = label ?? { sessionId: session.id, pinned: false, name: null, tags: [], note: null };
   const facts: [string, React.ReactNode, string?][] = [
     ["Model", session.model ?? "Unknown"],
     ["Started", `${elapsed(session.startedAt)} ago`],
@@ -139,11 +144,32 @@ function Header({ session }: { session: Session }) {
             <span className="text-subtle"> · {basename(folder)}</span>
           </p>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="truncate text-[19px] font-bold tracking-[-0.3px] text-ink">{session.title ?? "Untitled session"}</h1>
+            <h1 className="truncate text-[19px] font-bold tracking-[-0.3px] text-ink" title={label?.name ? (session.title ?? undefined) : undefined}>
+              {sessionTitle(session, label)}
+            </h1>
             <StatePill state={session.state} />
+            <LabelBadges label={label ? { ...label, pinned: false } : undefined} />
           </div>
+          {label?.note && !editing && (
+            <p className="mt-2 flex max-w-2xl items-start gap-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-2">
+              <StickyNote size={13} className="mt-0.5 shrink-0 text-subtle" aria-hidden />
+              {label.note}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-start gap-2">
+          <Button
+            icon={Pin}
+            aria-pressed={current.pinned}
+            className={current.pinned ? "border-accent-line bg-accent-soft text-accent-text" : undefined}
+            title={current.pinned ? "Unpin" : "Pin: keep this session past retention"}
+            onClick={() => setLabel.mutate({ ...current, pinned: !current.pinned })}
+          >
+            {current.pinned ? "Pinned" : "Pin"}
+          </Button>
+          <Button icon={Pencil} aria-expanded={editing} onClick={() => setEditing((e) => !e)}>
+            Label
+          </Button>
           {session.transcriptPath && (
             <Button icon={FileText} onClick={() => revealTranscript(session.id).catch((e) => setRevealError(String(e.message ?? e)))}>
               Show transcript
@@ -152,6 +178,15 @@ function Header({ session }: { session: Session }) {
           {session.endedAt === null && <GoToAgentButton sessionId={session.id} primary />}
         </div>
       </header>
+      {editing && (
+        <LabelEditor
+          label={current}
+          saving={setLabel.isPending}
+          error={setLabel.error ? String(setLabel.error.message) : null}
+          onCancel={() => setEditing(false)}
+          onSave={(next) => setLabel.mutate(next, { onSuccess: () => setEditing(false) })}
+        />
+      )}
       <dl className="grid grid-cols-2 gap-x-5 gap-y-3.5 px-5 py-4 lg:grid-cols-[1fr_0.8fr_1.4fr_1.3fr_1.7fr]">
         {facts.map(([label, value, title]) => (
           <div key={label} className="min-w-0">
@@ -172,6 +207,64 @@ function Header({ session }: { session: Session }) {
         </div>
       )}
     </Card>
+  );
+}
+
+function LabelEditor({
+  label,
+  saving,
+  error,
+  onSave,
+  onCancel,
+}: {
+  label: SessionLabel;
+  saving: boolean;
+  error: string | null;
+  onSave: (label: SessionLabel) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(label.name ?? "");
+  const [tags, setTags] = useState(label.tags.join(", "));
+  const [note, setNote] = useState(label.note ?? "");
+  const field =
+    "w-full rounded-[9px] border border-line bg-surface px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-subtle focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]";
+  return (
+    <form
+      className="grid gap-3 border-b border-line-soft bg-surface-2 px-5 py-4 md:grid-cols-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave({ ...label, name: name || null, note: note || null, tags: tags.split(",") });
+      }}
+      onKeyDown={(e) => e.key === "Escape" && onCancel()}
+    >
+      <label className="flex flex-col gap-1.5">
+        <Label>Name</Label>
+        <input autoFocus className={field} value={name} maxLength={120} onChange={(e) => setName(e.target.value)} placeholder="Shown instead of the title" />
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <Label>Tags</Label>
+        <input className={field} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Comma separated, like release, auth" />
+      </label>
+      <label className="flex flex-col gap-1.5 md:col-span-2">
+        <Label>Note</Label>
+        <textarea className={cx(field, "min-h-16 resize-y")} value={note} maxLength={4000} onChange={(e) => setNote(e.target.value)} placeholder="Anything to remember about this session" />
+      </label>
+      {error && (
+        <div className="md:col-span-2">
+          <Notice tone="danger" icon={CircleAlert}>
+            {error}
+          </Notice>
+        </div>
+      )}
+      <div className="flex gap-2 md:col-span-2">
+        <Button variant="primary" type="submit" disabled={saving}>
+          Save
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
 

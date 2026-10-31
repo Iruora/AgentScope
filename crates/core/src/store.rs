@@ -1,7 +1,7 @@
 //! SQLite persistence. Entities are stored as JSON next to the columns we
 //! query on, so the schema only changes when an index is needed.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 pub use chrono::Duration;
@@ -11,7 +11,7 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 use crate::event::AgentEvent;
-use crate::model::{Agent, PendingApproval, Session};
+use crate::model::{Agent, PendingApproval, Session, SessionLabel};
 use crate::reducer::{Changes, Graph};
 
 #[derive(Debug, thiserror::Error)]
@@ -87,7 +87,19 @@ const MIGRATIONS: &[&str] = &[
     );
     CREATE INDEX usage_session ON usage_daily (session_id);
 "#,
+    // What the user added to a session: pin, name, tags and a note.
+    r#"
+    CREATE TABLE session_meta (
+        session_id TEXT PRIMARY KEY,
+        pinned     INTEGER NOT NULL DEFAULT 0,
+        name       TEXT,
+        tags       TEXT NOT NULL DEFAULT '[]',
+        note       TEXT
+    );
+"#,
 ];
+
+const PINNED: &str = "SELECT session_id FROM session_meta WHERE pinned = 1";
 
 /// How long daily usage totals are kept, whatever the session retention.
 pub const USAGE_DAYS: i64 = 90;
@@ -223,13 +235,78 @@ impl Store {
         Ok(out)
     }
 
+    /// Every session label.
+    pub fn labels(&self) -> Result<Vec<SessionLabel>> {
+        let mut stmt = self
+            .conn
+            .prepare("SELECT session_id, pinned, name, tags, note FROM session_meta")?;
+        let rows = stmt.query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, bool>(1)?,
+                r.get::<_, Option<String>>(2)?,
+                r.get::<_, String>(3)?,
+                r.get::<_, Option<String>>(4)?,
+            ))
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let (session_id, pinned, name, tags, note) = row?;
+            out.push(SessionLabel {
+                session_id,
+                pinned,
+                name,
+                tags: serde_json::from_str(&tags).unwrap_or_default(),
+                note,
+            });
+        }
+        Ok(out)
+    }
+
+    /// Saves a label, cleaned up. An empty label is removed.
+    pub fn set_label(&self, label: &SessionLabel) -> Result<SessionLabel> {
+        let label = label.clone().cleaned();
+        if label.is_empty() {
+            self.conn.execute(
+                "DELETE FROM session_meta WHERE session_id = ?1",
+                [&label.session_id],
+            )?;
+        } else {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO session_meta (session_id, pinned, name, tags, note)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    label.session_id,
+                    label.pinned,
+                    label.name,
+                    serde_json::to_string(&label.tags)?,
+                    label.note,
+                ],
+            )?;
+        }
+        Ok(label)
+    }
+
+    /// Ids of pinned sessions, which are kept past retention.
+    pub fn pinned(&self) -> Result<HashSet<String>> {
+        let mut stmt = self.conn.prepare(PINNED)?;
+        let rows = stmt.query_map([], |r| r.get::<_, String>(0))?;
+        Ok(rows.collect::<std::result::Result<_, _>>()?)
+    }
+
     /// Drops events and sessions older than `retention`. Sessions that are
-    /// still live are kept however old they are.
+    /// still live, or pinned, are kept however old they are.
     pub fn prune(&mut self, retention: Duration) -> Result<usize> {
         let cutoff = (Utc::now() - retention).timestamp_millis();
         let tx = self.conn.transaction()?;
-        let mut removed = tx.execute("DELETE FROM events WHERE at_ms < ?1", [cutoff])?;
-        let old = "SELECT id FROM sessions WHERE ended_ms IS NOT NULL AND last_event_ms < ?1";
+        let mut removed = tx.execute(
+            &format!("DELETE FROM events WHERE at_ms < ?1 AND session_id NOT IN ({PINNED})"),
+            [cutoff],
+        )?;
+        let old = format!(
+            "SELECT id FROM sessions WHERE ended_ms IS NOT NULL AND last_event_ms < ?1 \
+             AND id NOT IN ({PINNED})"
+        );
         removed += tx.execute(
             &format!("DELETE FROM agents WHERE session_id IN ({old})"),
             [cutoff],
@@ -239,8 +316,12 @@ impl Store {
             [cutoff],
         )?;
         removed += tx.execute(
-            "DELETE FROM sessions WHERE ended_ms IS NOT NULL AND last_event_ms < ?1",
+            &format!("DELETE FROM sessions WHERE id IN ({old})"),
             [cutoff],
+        )?;
+        tx.execute(
+            "DELETE FROM session_meta WHERE session_id NOT IN (SELECT id FROM sessions)",
+            [],
         )?;
         let usage_cutoff = (chrono::Local::now() - Duration::days(USAGE_DAYS))
             .format("%Y-%m-%d")
@@ -451,6 +532,71 @@ mod tests {
         assert_eq!(snap.sessions[0].state, AgentState::WaitingApproval);
         assert_eq!(snap.approvals.len(), 1);
         assert_eq!(store.session_events("codex:s1", 10).unwrap().len(), 2);
+    }
+
+    #[test]
+    fn labels_are_cleaned_and_pinned_sessions_survive_prune() {
+        let mut store = Store::open_in_memory().unwrap();
+        let mut graph = Graph::new();
+        let old = Utc::now() - Duration::days(30);
+        for id in ["pinned", "named"] {
+            apply(&mut store, &mut graph, ev(id, old, EventKind::SessionEnded));
+        }
+        let pinned = graph.snapshot().sessions[0].id.clone();
+        let named = graph.snapshot().sessions[1].id.clone();
+        let saved = store
+            .set_label(&SessionLabel {
+                session_id: pinned.clone(),
+                pinned: true,
+                name: Some("  Release prep ".into()),
+                tags: vec![
+                    "#Infra".into(),
+                    "infra".into(),
+                    " big  refactor ".into(),
+                    "".into(),
+                ],
+                note: Some("   ".into()),
+            })
+            .unwrap();
+        assert_eq!(saved.name.as_deref(), Some("Release prep"));
+        assert_eq!(saved.tags, ["infra", "big-refactor"]);
+        assert_eq!(saved.note, None);
+        store
+            .set_label(&SessionLabel {
+                session_id: named.clone(),
+                name: Some("Gone soon".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(store.labels().unwrap().len(), 2);
+
+        store.prune(Duration::days(7)).unwrap();
+        let left: Vec<_> = store
+            .load_graph()
+            .unwrap()
+            .snapshot()
+            .sessions
+            .into_iter()
+            .map(|s| s.id)
+            .collect();
+        assert_eq!(left, std::slice::from_ref(&pinned));
+        assert_eq!(
+            store.labels().unwrap().len(),
+            1,
+            "labels of pruned sessions go too"
+        );
+        assert!(store.pinned().unwrap().contains(&pinned));
+
+        store
+            .set_label(&SessionLabel {
+                session_id: pinned,
+                ..Default::default()
+            })
+            .unwrap();
+        assert!(
+            store.labels().unwrap().is_empty(),
+            "an empty label is removed"
+        );
     }
 
     #[test]

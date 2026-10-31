@@ -99,6 +99,8 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::get_usage,
             commands::get_costs,
             commands::get_file_diff,
+            commands::get_labels,
+            commands::set_label,
         ])
         .events(collect_events![
             GraphChanged,
