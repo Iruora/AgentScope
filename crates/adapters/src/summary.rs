@@ -81,16 +81,25 @@ pub fn tool_summary(tool: &str, input: &Value, cwd: &str) -> String {
 /// file in an `apply_patch` envelope. Reads and shell commands write nothing
 /// we can see, so they return none.
 pub fn tool_files(tool: &str, input: &Value, cwd: &str) -> Vec<String> {
+    // Joined as strings with the cwd's own separator, so a path reads the
+    // same whichever OS AgentScope runs on.
     let absolute = |p: &str| -> String {
-        let path = Path::new(p.trim());
-        if path.is_absolute() || cwd.is_empty() {
-            path.display().to_string()
-        } else {
-            Path::new(cwd)
-                .join(path.strip_prefix("./").unwrap_or(path))
-                .display()
-                .to_string()
+        let p = p.trim();
+        let rooted =
+            p.starts_with(['/', '\\']) || p.get(1..3).is_some_and(|s| s == ":\\" || s == ":/");
+        if rooted || cwd.is_empty() {
+            return p.to_owned();
         }
+        let sep = if cwd.contains('\\') && !cwd.contains('/') {
+            '\\'
+        } else {
+            '/'
+        };
+        let rel = p
+            .strip_prefix("./")
+            .or_else(|| p.strip_prefix(".\\"))
+            .unwrap_or(p);
+        format!("{}{sep}{rel}", cwd.trim_end_matches(['/', '\\']))
     };
     match tool.to_ascii_lowercase().as_str() {
         "write" | "edit" | "multiedit" | "notebookedit" | "create" | "delete" | "edit_file"
@@ -180,6 +189,14 @@ mod tests {
                 cwd
             ),
             ["/repo/src/a.rs", "/repo/b.rs"]
+        );
+        assert_eq!(
+            tool_files("write", &json!({ "path": ".\\a.txt" }), "C:\\work\\"),
+            ["C:\\work\\a.txt"]
+        );
+        assert_eq!(
+            tool_files("write", &json!({ "path": "D:\\b.txt" }), "C:\\work"),
+            ["D:\\b.txt"]
         );
     }
 
