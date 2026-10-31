@@ -105,6 +105,7 @@ mod tests {
             agents: vec![],
             approvals: vec![],
             waiting_count: 0,
+            concerns: vec![],
         }
     }
 

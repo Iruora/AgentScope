@@ -19,7 +19,7 @@ use agentscope_core::{
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::summary::tool_summary;
+use crate::summary::{tool_files, tool_summary};
 use crate::TranscriptFile;
 
 /// Which agent a transcript file belongs to, from its path.
@@ -203,6 +203,7 @@ impl Parser<'_> {
                 EventKind::ToolStarted {
                     tool: tool.to_owned(),
                     summary: tool_summary(tool, input, &cwd),
+                    files: tool_files(tool, input, &cwd),
                 },
             );
         }

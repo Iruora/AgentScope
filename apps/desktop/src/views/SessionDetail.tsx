@@ -1,14 +1,24 @@
-import { ArrowLeft, CircleAlert, FileText, Network } from "lucide-react";
+import { ArrowLeft, ChevronRight, CircleAlert, FilePen, FileText, Download, Network, Pencil, Pin, StickyNote } from "lucide-react";
 import { useMemo, useState } from "react";
 
+import { concernIcons, concernTitles } from "../components/Concerns";
 import { GoToAgentButton } from "../components/GoToAgentButton";
 import { StatePill, stateTones } from "../components/StatePill";
 import { Button, Card, Code, Dot, Label, Notice, cx, toneSolid, type Tone } from "../components/ui";
-import { revealTranscript, useSessionEvents, useSnapshot } from "../lib/api";
-import { basename, clockTime, compactNumber, elapsed, harnessNames } from "../lib/format";
-import type { Agent, AgentEvent, Session } from "../lib/types";
+import { exportSession, revealTranscript, sessionTitle, useCosts, useFileDiff, useLabels, useSessionEvents, useSetLabel, useSnapshot } from "../lib/api";
+import { LabelBadges } from "../components/Labels";
+import { basename, clockTime, compactNumber, elapsed, harnessNames, usd } from "../lib/format";
+import type { Agent, AgentEvent, Concern, FileTouch, Session, SessionLabel } from "../lib/types";
 
-export function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack: () => void }) {
+export function SessionDetail({
+  sessionId,
+  onBack,
+  onOpen,
+}: {
+  sessionId: string;
+  onBack: () => void;
+  onOpen?: (sessionId: string) => void;
+}) {
   const snapshot = useSnapshot();
   const session = snapshot.data?.sessions.find((s) => s.id === sessionId);
   const agents = useMemo(
@@ -16,6 +26,9 @@ export function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack
     [snapshot.data, sessionId],
   );
   const [selected, setSelected] = useState<string | null>(null);
+  const [tab, setTab] = useState<"timeline" | "files">("timeline");
+  const concerns = (snapshot.data?.concerns ?? []).filter((c) => c.sessionId === sessionId);
+  const titles = new Map((snapshot.data?.sessions ?? []).map((s) => [s.id, s.title ?? basename(s.cwd)]));
 
   if (snapshot.isSuccess && !session) {
     return (
@@ -31,6 +44,7 @@ export function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack
     <div className="mx-auto flex max-w-[1180px] flex-col gap-5">
       <BackButton onBack={onBack} />
       <Header session={session} />
+      {concerns.length > 0 && <ConcernList concerns={concerns} titles={titles} onOpen={onOpen} />}
       <div className="grid items-start gap-5 md:grid-cols-[17rem_minmax(0,1fr)]">
         <Card className="min-w-0 p-3">
           <div className="flex items-center gap-2 px-1.5 pt-0.5 pb-2.5">
@@ -46,15 +60,40 @@ export function SessionDetail({ sessionId, onBack }: { sessionId: string; onBack
           />
         </Card>
         <Card className="min-w-0 overflow-hidden">
-          <div className="flex items-center justify-between gap-2 border-b border-line-soft px-4 py-3">
-            <h2 className="text-[13px] font-bold text-ink">Timeline</h2>
-            {selected && (
+          <div className="flex items-center justify-between gap-2 border-b border-line-soft px-4 py-2">
+            <div role="tablist" aria-label="Session view" className="flex gap-1">
+              {(
+                [
+                  ["timeline", "Timeline"],
+                  ["files", `Files${session.files?.length ? ` (${session.files.length})` : ""}`],
+                ] as const
+              ).map(([id, label]) => (
+                <button
+                  key={id}
+                  type="button"
+                  role="tab"
+                  aria-selected={tab === id}
+                  onClick={() => setTab(id)}
+                  className={cx(
+                    "h-7 rounded-[7px] px-2.5 text-[13px] font-bold transition-colors",
+                    tab === id ? "bg-accent-soft text-accent-text" : "text-muted hover:text-ink",
+                  )}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            {tab === "timeline" && selected && (
               <button type="button" className="text-[11px] font-semibold text-accent-text hover:underline" onClick={() => setSelected(null)}>
                 Show all agents
               </button>
             )}
           </div>
-          <Timeline session={session} agents={agents} selected={selected} />
+          {tab === "timeline" ? (
+            <Timeline session={session} agents={agents} selected={selected} />
+          ) : (
+            <Files session={session} agents={agents} />
+          )}
         </Card>
       </div>
     </div>
@@ -75,7 +114,13 @@ function BackButton({ onBack }: { onBack: () => void }) {
 }
 
 function Header({ session }: { session: Session }) {
+  const costs = useCosts();
+  const label = useLabels().data?.get(session.id);
+  const setLabel = useSetLabel();
+  const [editing, setEditing] = useState(false);
   const [revealError, setRevealError] = useState<string | null>(null);
+  const [exported, setExported] = useState<string | null>(null);
+  const current: SessionLabel = label ?? { sessionId: session.id, pinned: false, name: null, tags: [], note: null };
   const facts: [string, React.ReactNode, string?][] = [
     ["Model", session.model ?? "Unknown"],
     ["Started", `${elapsed(session.startedAt)} ago`],
@@ -87,6 +132,8 @@ function Header({ session }: { session: Session }) {
     const cached = t.cached ? ` · ${compactNumber(t.cached)} cached` : "";
     facts.push(["Tokens", `${compactNumber(t.input ?? 0)} in · ${compactNumber(t.output ?? 0)} out${cached}`]);
   }
+  const cost = costs.data?.[session.id];
+  if (cost != null) facts.push(["Est. cost", `~${usd(cost)}`, "At API list prices; subscription plans are not billed per token"]);
   const folder = session.repo?.root ?? session.cwd;
 
   return (
@@ -98,11 +145,39 @@ function Header({ session }: { session: Session }) {
             <span className="text-subtle"> · {basename(folder)}</span>
           </p>
           <div className="flex flex-wrap items-center gap-2.5">
-            <h1 className="truncate text-[19px] font-bold tracking-[-0.3px] text-ink">{session.title ?? "Untitled session"}</h1>
+            <h1 className="truncate text-[19px] font-bold tracking-[-0.3px] text-ink" title={label?.name ? (session.title ?? undefined) : undefined}>
+              {sessionTitle(session, label)}
+            </h1>
             <StatePill state={session.state} />
+            <LabelBadges label={label ? { ...label, pinned: false } : undefined} />
           </div>
+          {label?.note && !editing && (
+            <p className="mt-2 flex max-w-2xl items-start gap-1.5 text-[12px] leading-relaxed whitespace-pre-wrap text-ink-2">
+              <StickyNote size={13} className="mt-0.5 shrink-0 text-subtle" aria-hidden />
+              {label.note}
+            </p>
+          )}
         </div>
         <div className="flex shrink-0 items-start gap-2">
+          <Button
+            icon={Pin}
+            aria-pressed={current.pinned}
+            className={current.pinned ? "border-accent-line bg-accent-soft text-accent-text" : undefined}
+            title={current.pinned ? "Unpin" : "Pin: keep this session past retention"}
+            onClick={() => setLabel.mutate({ ...current, pinned: !current.pinned })}
+          >
+            {current.pinned ? "Pinned" : "Pin"}
+          </Button>
+          <Button icon={Pencil} aria-expanded={editing} onClick={() => setEditing((e) => !e)}>
+            Label
+          </Button>
+          <ExportMenu
+            onExport={(format) =>
+              exportSession(session.id, format)
+                .then((path) => path && setExported(path))
+                .catch((e) => setRevealError(String(e.message ?? e)))
+            }
+          />
           {session.transcriptPath && (
             <Button icon={FileText} onClick={() => revealTranscript(session.id).catch((e) => setRevealError(String(e.message ?? e)))}>
               Show transcript
@@ -111,6 +186,15 @@ function Header({ session }: { session: Session }) {
           {session.endedAt === null && <GoToAgentButton sessionId={session.id} primary />}
         </div>
       </header>
+      {editing && (
+        <LabelEditor
+          label={current}
+          saving={setLabel.isPending}
+          error={setLabel.error ? String(setLabel.error.message) : null}
+          onCancel={() => setEditing(false)}
+          onSave={(next) => setLabel.mutate(next, { onSuccess: () => setEditing(false) })}
+        />
+      )}
       <dl className="grid grid-cols-2 gap-x-5 gap-y-3.5 px-5 py-4 lg:grid-cols-[1fr_0.8fr_1.4fr_1.3fr_1.7fr]">
         {facts.map(([label, value, title]) => (
           <div key={label} className="min-w-0">
@@ -123,6 +207,13 @@ function Header({ session }: { session: Session }) {
           </div>
         ))}
       </dl>
+      {exported && (
+        <div className="px-5 pb-4">
+          <Notice tone="work" icon={Download}>
+            Saved to <Code className="max-w-full text-[11px]">{exported}</Code>
+          </Notice>
+        </div>
+      )}
       {revealError && (
         <div className="px-5 pb-4">
           <Notice tone="danger" icon={CircleAlert}>
@@ -131,6 +222,106 @@ function Header({ session }: { session: Session }) {
         </div>
       )}
     </Card>
+  );
+}
+
+function ExportMenu({ onExport }: { onExport: (format: "markdown" | "json") => void }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <div
+      className="relative"
+      onBlur={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+      }}
+      onKeyDown={(e) => e.key === "Escape" && setOpen(false)}
+    >
+      <Button icon={Download} aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        Export
+      </Button>
+      {open && (
+        <div role="menu" className="absolute right-0 z-20 mt-1.5 w-56 overflow-hidden rounded-[10px] border border-line bg-surface p-1 shadow-card">
+          {(
+            [
+              ["markdown", "Markdown", "To read or paste in a PR"],
+              ["json", "JSON", "Everything, to keep or process"],
+            ] as const
+          ).map(([format, name, hint]) => (
+            <button
+              key={format}
+              type="button"
+              role="menuitem"
+              onClick={() => {
+                setOpen(false);
+                onExport(format);
+              }}
+              className="flex w-full flex-col items-start rounded-[7px] px-2.5 py-1.5 text-left hover:bg-surface-2"
+            >
+              <span className="text-[12px] font-semibold text-ink">{name}</span>
+              <span className="text-[11px] text-subtle">{hint}</span>
+            </button>
+          ))}
+          <p className="border-t border-line-soft px-2.5 pt-1.5 pb-1 text-[10px] text-subtle">Keys and tokens are redacted.</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function LabelEditor({
+  label,
+  saving,
+  error,
+  onSave,
+  onCancel,
+}: {
+  label: SessionLabel;
+  saving: boolean;
+  error: string | null;
+  onSave: (label: SessionLabel) => void;
+  onCancel: () => void;
+}) {
+  const [name, setName] = useState(label.name ?? "");
+  const [tags, setTags] = useState(label.tags.join(", "));
+  const [note, setNote] = useState(label.note ?? "");
+  const field =
+    "w-full rounded-[9px] border border-line bg-surface px-2.5 py-1.5 text-[12px] text-ink outline-none placeholder:text-subtle focus:border-accent focus:shadow-[0_0_0_3px_var(--accent-ring)]";
+  return (
+    <form
+      className="grid gap-3 border-b border-line-soft bg-surface-2 px-5 py-4 md:grid-cols-2"
+      onSubmit={(e) => {
+        e.preventDefault();
+        onSave({ ...label, name: name || null, note: note || null, tags: tags.split(",") });
+      }}
+      onKeyDown={(e) => e.key === "Escape" && onCancel()}
+    >
+      <label className="flex flex-col gap-1.5">
+        <Label>Name</Label>
+        <input autoFocus className={field} value={name} maxLength={120} onChange={(e) => setName(e.target.value)} placeholder="Shown instead of the title" />
+      </label>
+      <label className="flex flex-col gap-1.5">
+        <Label>Tags</Label>
+        <input className={field} value={tags} onChange={(e) => setTags(e.target.value)} placeholder="Comma separated, like release, auth" />
+      </label>
+      <label className="flex flex-col gap-1.5 md:col-span-2">
+        <Label>Note</Label>
+        <textarea className={cx(field, "min-h-16 resize-y")} value={note} maxLength={4000} onChange={(e) => setNote(e.target.value)} placeholder="Anything to remember about this session" />
+      </label>
+      {error && (
+        <div className="md:col-span-2">
+          <Notice tone="danger" icon={CircleAlert}>
+            {error}
+          </Notice>
+        </div>
+      )}
+      <div className="flex gap-2 md:col-span-2">
+        <Button variant="primary" type="submit" disabled={saving}>
+          Save
+        </Button>
+        <Button variant="ghost" onClick={onCancel}>
+          Cancel
+        </Button>
+      </div>
+    </form>
   );
 }
 
@@ -330,5 +521,136 @@ function Timeline({ session, agents, selected }: { session: Session; agents: Age
         </li>
       ))}
     </ol>
+  );
+}
+
+function ConcernList({
+  concerns,
+  titles,
+  onOpen,
+}: {
+  concerns: Concern[];
+  titles: Map<string, string>;
+  onOpen?: (sessionId: string) => void;
+}) {
+  return (
+    <ul className="flex flex-col gap-2">
+      {concerns.map((c) => {
+        const Icon = concernIcons[c.kind];
+        return (
+          <li key={c.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 rounded-[12px] bg-warn-soft px-4 py-2.5 text-[12px]">
+            <Icon size={15} className="shrink-0 text-warn-text" aria-hidden />
+            <span className="font-semibold text-warn-text">{concernTitles[c.kind]}</span>
+            <span className="min-w-0 flex-1 text-ink-2">{c.message}</span>
+            {c.otherSessionIds.map((id) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => onOpen?.(id)}
+                className="inline-flex items-center gap-0.5 font-semibold text-accent-text hover:underline"
+              >
+                {titles.get(id) ?? "Other session"}
+                <ChevronRight size={13} aria-hidden />
+              </button>
+            ))}
+          </li>
+        );
+      })}
+    </ul>
+  );
+}
+
+/** Files the session's agents wrote, newest first, with a read-only git diff. */
+function Files({ session, agents }: { session: Session; agents: Agent[] }) {
+  const files: FileTouch[] = session.files ?? [];
+  const [open, setOpen] = useState<string | null>(files[0]?.path ?? null);
+  const names = new Map(agents.map((a) => [a.id, agentLabel(a)]));
+  const root = session.repo?.root ?? session.cwd;
+  const rel = (p: string) => (root && p.startsWith(root + "/") ? p.slice(root.length + 1) : p);
+
+  if (files.length === 0) {
+    return (
+      <p className="flex items-center gap-2 px-4 py-6 text-[12px] text-muted">
+        <FilePen size={14} aria-hidden /> No file edits seen in this session yet.
+      </p>
+    );
+  }
+  return (
+    <div className="grid min-h-[320px] md:grid-cols-[minmax(0,15rem)_minmax(0,1fr)]">
+      <ul className="max-h-[560px] overflow-y-auto border-b border-line-soft py-1.5 md:border-r md:border-b-0">
+        {files.map((f) => (
+          <li key={f.path}>
+            <button
+              type="button"
+              aria-current={open === f.path}
+              onClick={() => setOpen(f.path)}
+              title={f.path}
+              className={cx(
+                "flex w-full flex-col gap-0.5 px-3.5 py-1.5 text-left transition-colors",
+                open === f.path ? "bg-accent-soft" : "hover:bg-surface-2",
+              )}
+            >
+              <span className={cx("truncate font-mono text-[11.5px]", open === f.path ? "text-accent-text" : "text-ink-2")}>
+                {rel(f.path)}
+              </span>
+              <span className="text-[10.5px] text-subtle">
+                {f.edits} edit{f.edits === 1 ? "" : "s"} · {elapsed(f.lastAt)} ago
+                {names.size > 1 && ` · ${names.get(f.agentId) ?? "agent"}`}
+              </span>
+            </button>
+          </li>
+        ))}
+      </ul>
+      <div className="min-w-0">{open && <Diff sessionId={session.id} path={open} inRepo={session.repo != null} />}</div>
+    </div>
+  );
+}
+
+function Diff({ sessionId, path, inRepo }: { sessionId: string; path: string; inRepo: boolean }) {
+  const diff = useFileDiff(sessionId, inRepo ? path : null);
+  if (!inRepo) {
+    return <p className="p-4 text-[12px] text-muted">This session is not in a git repository, so there is no diff to show.</p>;
+  }
+  if (diff.isPending) return <p className="p-4 text-[12px] text-muted">Running git diff…</p>;
+  if (diff.isError) {
+    return (
+      <div className="p-4">
+        <Notice tone="danger" icon={CircleAlert}>
+          {diff.error.message}
+        </Notice>
+      </div>
+    );
+  }
+  const d = diff.data;
+  const note = d.untracked
+    ? "New file, not committed or staged yet."
+    : d.deleted && !d.diff
+      ? "The file was deleted."
+      : !d.diff
+        ? "No uncommitted changes. They may have been committed already."
+        : null;
+  return (
+    <div className="flex flex-col">
+      {note && <p className="border-b border-line-soft px-4 py-2 text-[11.5px] text-muted">{note}</p>}
+      {d.diff && (
+        <pre className="max-h-[560px] overflow-auto py-2 font-mono text-[11.5px] leading-[1.6]">
+          {d.diff.split("\n").map((line, i) => (
+            <div
+              key={i}
+              className={cx(
+                "px-4 whitespace-pre",
+                line.startsWith("+") && !line.startsWith("+++") && "bg-work-soft text-work-text",
+                line.startsWith("-") && !line.startsWith("---") && "bg-danger-soft text-danger-text",
+                line.startsWith("@@") && "text-accent-text",
+                (line.startsWith("diff ") || line.startsWith("index ") || line.startsWith("+++") || line.startsWith("---")) && "text-subtle",
+              )}
+            >
+              {line || " "}
+            </div>
+          ))}
+        </pre>
+      )}
+      {d.truncated && <p className="px-4 py-2 text-[11px] text-subtle">The diff is long, so only the start is shown.</p>}
+    </div>
   );
 }

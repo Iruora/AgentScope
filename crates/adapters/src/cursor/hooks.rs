@@ -18,7 +18,7 @@ use agentscope_core::{
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
-use crate::summary::{tool_summary, DETAIL_MAX_STRING};
+use crate::summary::{tool_files, tool_summary, DETAIL_MAX_STRING};
 
 /// Hook events AgentScope registers. The shim prints nothing, which Cursor
 /// treats as "no decision" and lets the action proceed, so none of these
@@ -124,6 +124,7 @@ pub fn normalize(raw: &RawHookEvent, subagents: &mut HashMap<String, Subagent>) 
                 EventKind::ToolStarted {
                     tool: tool.to_owned(),
                     summary: summary.clone(),
+                    files: tool_files(tool, &input, cwd),
                 },
             ));
             if may_prompt(tool) {

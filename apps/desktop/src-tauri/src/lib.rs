@@ -2,6 +2,8 @@ mod commands;
 mod decide;
 mod diagnostics;
 mod engine;
+mod export;
+mod files;
 mod focus;
 mod hotkey;
 mod logbuf;
@@ -13,6 +15,8 @@ mod settings;
 mod shim;
 mod tray;
 mod updater;
+mod usage;
+mod widget;
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
@@ -51,6 +55,8 @@ pub struct Runtime {
     ingest_port: Mutex<Option<u16>>,
     settings: Mutex<Settings>,
     notified: Mutex<HashMap<String, (AgentState, Instant)>>,
+    /// Concern ids last published, to notify each once.
+    concerns: Mutex<std::collections::BTreeSet<String>>,
     tray_menu: Mutex<tray::MenuKey>,
 }
 
@@ -92,6 +98,13 @@ fn specta_builder() -> tauri_specta::Builder<tauri::Wry> {
             commands::show_session,
             commands::close_popup,
             commands::test_push,
+            commands::get_usage,
+            commands::get_costs,
+            commands::get_file_diff,
+            commands::get_labels,
+            commands::set_label,
+            commands::export_session,
+            commands::set_widget,
         ])
         .events(collect_events![
             GraphChanged,
@@ -141,6 +154,7 @@ pub fn run() {
             show_main_window(app)
         }))
         .plugin(tauri_plugin_clipboard_manager::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
@@ -187,6 +201,7 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
     std::fs::create_dir_all(&data_dir)?;
     let settings = settings::load(&data_dir);
     let shortcut = settings.global_shortcut.clone();
+    let show_widget = settings.widget;
     let engine = Arc::new(Engine::open(
         &data_dir.join("agentscope.db"),
         settings.retention_days,
@@ -199,12 +214,16 @@ fn setup(app: &AppHandle) -> Result<(), Box<dyn std::error::Error>> {
         data_dir: data_dir.clone(),
         ingest_port: Mutex::new(None),
         notified: Mutex::new(HashMap::new()),
+        concerns: Mutex::new(std::collections::BTreeSet::new()),
         tray_menu: Mutex::new(tray::MenuKey::default()),
     });
 
     tray::create(app)?;
     if let Err(err) = hotkey::apply(app, &shortcut) {
         tracing::warn!(%err, "global shortcut not registered");
+    }
+    if show_widget {
+        widget::set(app, true);
     }
     publish(app, &engine, Outcome::changed());
 
@@ -383,7 +402,20 @@ fn spawn_sweeper(app: AppHandle, engine: Arc<Engine>) {
             })
             .await;
             match swept {
-                Ok(outcome) => publish(&app, &engine, outcome),
+                Ok(mut outcome) => {
+                    // Concerns appear with time alone (a tool that runs on).
+                    let ids = engine.concern_ids();
+                    if *app
+                        .state::<Runtime>()
+                        .concerns
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        != ids
+                    {
+                        outcome.changed = true;
+                    }
+                    publish(&app, &engine, outcome)
+                }
                 Err(err) => tracing::error!(%err, "sweep failed"),
             }
         }
@@ -410,6 +442,7 @@ fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
         return;
     }
     let snapshot = engine.snapshot();
+    notify_concerns(app, &snapshot);
     let open = snapshot.approvals.iter().map(|a| a.id.clone()).collect();
     let decisions = app.state::<decide::Decisions>();
     decisions.retain_open(&open);
@@ -418,7 +451,12 @@ fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
     let runtime = app.state::<Runtime>();
     let settings = runtime.settings();
     popup::sync(app, &answerable, settings.popup_approvals);
-    let key = tray::menu_key(&snapshot, &answerable, settings.confirm_risky);
+    let key = tray::menu_key(
+        &snapshot,
+        &answerable,
+        settings.confirm_risky,
+        settings.widget,
+    );
     let menu_changed = {
         let mut last = runtime.tray_menu.lock().unwrap_or_else(|e| e.into_inner());
         let changed = *last != key;
@@ -428,6 +466,48 @@ fn publish(app: &AppHandle, engine: &Engine, outcome: Outcome) {
     tray::update(app, waiting_count, menu_changed.then_some(&key));
     if let Err(err) = (GraphChanged { waiting_count }).emit(app) {
         tracing::warn!(%err, "failed to emit graph change");
+    }
+}
+
+/// Notifies about concerns that were not there at the last publish.
+fn notify_concerns(app: &AppHandle, snapshot: &agentscope_core::Snapshot) {
+    let runtime = app.state::<Runtime>();
+    let ids: std::collections::BTreeSet<String> =
+        snapshot.concerns.iter().map(|c| c.id.clone()).collect();
+    let fresh: Vec<_> = {
+        let mut seen = runtime.concerns.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = snapshot
+            .concerns
+            .iter()
+            .filter(|c| !seen.contains(&c.id))
+            .cloned()
+            .collect();
+        *seen = ids;
+        fresh
+    };
+    if !runtime.settings().notify_concerns {
+        return;
+    }
+    for concern in fresh {
+        let name = snapshot
+            .sessions
+            .iter()
+            .find(|s| s.id == concern.session_id)
+            .map(|s| {
+                s.title
+                    .clone()
+                    .unwrap_or_else(|| focus::display_dir(&s.cwd))
+            })
+            .unwrap_or_default();
+        if let Err(err) = app
+            .notification()
+            .builder()
+            .title(&name)
+            .body(&concern.message)
+            .show()
+        {
+            tracing::warn!(%err, "failed to show notification");
+        }
     }
 }
 

@@ -11,7 +11,7 @@ use agentscope_core::{
 use chrono::{TimeZone, Utc};
 use serde_json::Value;
 
-use crate::summary::{tool_summary, DETAIL_MAX_STRING};
+use crate::summary::{tool_files, tool_summary, DETAIL_MAX_STRING};
 
 /// Hook events AgentScope registers. All are observe-only: the shim never
 /// prints anything, so none of them can change what Claude Code does.
@@ -92,6 +92,7 @@ pub fn normalize(raw: &RawHookEvent) -> Vec<AgentEvent> {
                 EventKind::ToolStarted {
                     tool: tool.to_owned(),
                     summary: tool_summary(tool, input, cwd),
+                    files: tool_files(tool, input, cwd),
                 },
             )];
             if ASKS_USER.contains(&tool) {

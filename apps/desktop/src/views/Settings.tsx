@@ -375,7 +375,7 @@ function Switch({ checked, onChange, label }: { checked: boolean; onChange: () =
   );
 }
 
-type NotifyKey = "notifyApprovals" | "notifyInput";
+type NotifyKey = "notifyApprovals" | "notifyInput" | "notifyConcerns";
 
 function NotificationsSection() {
   const settings = useSettings();
@@ -386,6 +386,11 @@ function NotificationsSection() {
   const options: [NotifyKey, string, string][] = [
     ["notifyApprovals", "An agent needs approval", "A permission prompt is waiting in a terminal."],
     ["notifyInput", "An agent is waiting for input", "It finished its turn or asked you a question."],
+    [
+      "notifyConcerns",
+      "An agent looks stuck or overlaps another",
+      "A tool has run for 10 minutes, the same command failed 3 times, a session went quiet, or two agents edit the same file.",
+    ],
   ];
   return (
     <SettingsCard icon={Bell} title="Notifications" description="Desktop notifications for the moments an agent is blocked on you.">
@@ -422,7 +427,7 @@ function HistorySection() {
     <SettingsCard
       icon={History}
       title="History"
-      description="Ended sessions and their events stay on this machine for this long, then are deleted. Live sessions are always kept."
+      description="Ended sessions and their events stay on this machine for this long, then are deleted. Live and pinned sessions are always kept."
     >
       <div className="flex items-center justify-between gap-4 px-5 py-3.5">
         <label htmlFor="retention" className="text-[13px] font-semibold text-ink">
@@ -636,7 +641,7 @@ function ShortcutsSection() {
   return (
     <SettingsCard
       icon={Keyboard}
-      title="Shortcuts"
+      title="Quick access"
       description={
         <>
           Press <kbd className="font-semibold">{modKey} K</kbd> in AgentScope to search sessions, views and actions. A global
@@ -665,6 +670,15 @@ function ShortcutsSection() {
             </option>
           ))}
         </select>
+      </div>
+      <div className="flex items-center justify-between gap-4 border-t border-line-soft px-5 py-3.5">
+        <span>
+          <span className="block text-[13px] font-semibold text-ink">Mini widget</span>
+          <span className="mt-0.5 block text-[11px] text-muted">
+            A small always-on-top window with who needs you and one line per live agent. Also in the tray menu.
+          </span>
+        </span>
+        <Switch checked={current.widget} onChange={() => save.mutate({ ...current, widget: !current.widget })} label="Mini widget" />
       </div>
       {save.isError && (
         <div className="px-5 pb-4">

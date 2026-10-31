@@ -52,3 +52,10 @@ export function compactNumber(n: number): string {
 export function clockTime(at: string): string {
   return new Date(at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
 }
+
+/** An estimated USD amount: "<$0.01", "$0.42", "$12.30", "$1,234". */
+export function usd(n: number): string {
+  if (n > 0 && n < 0.01) return "<$0.01";
+  if (n >= 1000) return `$${Math.round(n).toLocaleString("en-US")}`;
+  return `$${n.toFixed(2)}`;
+}

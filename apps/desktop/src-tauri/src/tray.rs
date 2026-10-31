@@ -18,6 +18,7 @@ const MAX_APPROVALS: usize = 5;
 pub struct MenuKey {
     approvals: Vec<MenuApproval>,
     sessions: Vec<(String, AgentState, String)>,
+    widget: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -106,6 +107,15 @@ fn build_menu(app: &AppHandle, key: &MenuKey) -> tauri::Result<Menu<tauri::Wry>>
         menu.append(&PredefinedMenuItem::separator(app)?)?;
     }
     menu.append(&item(app, "open", "Open AgentScope")?)?;
+    menu.append(&item(
+        app,
+        "widget",
+        if key.widget {
+            "Hide mini widget"
+        } else {
+            "Show mini widget"
+        },
+    )?)?;
     menu.append(&PredefinedMenuItem::separator(app)?)?;
     menu.append(&item(app, "quit", "Quit AgentScope")?)?;
     Ok(menu)
@@ -119,6 +129,14 @@ pub fn create(app: &AppHandle) -> tauri::Result<TrayIcon> {
         .on_menu_event(|app, event| match event.id.as_ref() {
             "open" => crate::show_main_window(app),
             "quit" => app.exit(0),
+            "widget" => {
+                let visible = !tauri::Manager::state::<crate::Runtime>(app)
+                    .settings()
+                    .widget;
+                if let Err(err) = crate::commands::toggle_widget(app, visible) {
+                    tracing::warn!(%err, "could not toggle the mini widget");
+                }
+            }
             id => {
                 if let Some(session) = id.strip_prefix(SESSION_PREFIX) {
                     crate::open_session(app, session);
@@ -159,7 +177,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<TrayIcon> {
 
 /// Answerable prompts, oldest first, then live sessions: waiting on the
 /// user first, then most recent.
-pub fn menu_key(snapshot: &Snapshot, answerable: &[String], confirm_risky: bool) -> MenuKey {
+pub fn menu_key(
+    snapshot: &Snapshot,
+    answerable: &[String],
+    confirm_risky: bool,
+    widget: bool,
+) -> MenuKey {
     let place = |session_id: &str| {
         snapshot
             .sessions
@@ -214,6 +237,7 @@ pub fn menu_key(snapshot: &Snapshot, answerable: &[String], confirm_risky: bool)
     MenuKey {
         approvals,
         sessions,
+        widget,
     }
 }
 

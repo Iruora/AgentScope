@@ -15,7 +15,7 @@ use agentscope_core::{
 use chrono::{DateTime, Utc};
 use serde_json::Value;
 
-use crate::summary::tool_summary;
+use crate::summary::{tool_files, tool_summary};
 use crate::TranscriptFile;
 
 /// Longest first line read to learn a file's owner; `session_meta` can carry
@@ -199,7 +199,15 @@ impl Parser {
         };
         if let Some((tool, input)) = call {
             let summary = tool_summary(&tool, &input, &self.cwd);
-            self.push(call_id, EventKind::ToolStarted { tool, summary });
+            let files = tool_files(&tool, &input, &self.cwd);
+            self.push(
+                call_id,
+                EventKind::ToolStarted {
+                    tool,
+                    summary,
+                    files,
+                },
+            );
         }
     }
 

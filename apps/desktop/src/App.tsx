@@ -1,12 +1,14 @@
 import { useQueryClient } from "@tanstack/react-query";
 import {
   ArrowDownToLine,
+  BarChart3,
   Bell,
   ClipboardCopy,
   History,
   Inbox,
   LayoutGrid,
   Moon,
+  PanelTopOpen,
   Radar,
   RefreshCw,
   Search,
@@ -25,6 +27,8 @@ import {
   useGraphUpdates,
   useInstallUpdate,
   useOpenSessionRequests,
+  setWidget,
+  useLabels,
   useSettings,
   useSnapshot,
   useUpdate,
@@ -39,8 +43,9 @@ import { Onboarding } from "./views/Onboarding";
 import { Overview } from "./views/Overview";
 import { SessionDetail } from "./views/SessionDetail";
 import { Settings } from "./views/Settings";
+import { Usage } from "./views/Usage";
 
-type Section = "Overview" | "Approvals" | "History" | "Settings";
+type Section = "Overview" | "Approvals" | "History" | "Usage" | "Settings";
 
 type Route = { section: Section; sessionId?: string; filter: SessionFilter };
 
@@ -74,11 +79,20 @@ export function App() {
 
   let view;
   if (route.sessionId) {
-    view = <SessionDetail sessionId={route.sessionId} onBack={() => setRoute({ ...route, sessionId: undefined })} />;
+    view = (
+      <SessionDetail
+        key={route.sessionId}
+        sessionId={route.sessionId}
+        onBack={() => setRoute({ ...route, sessionId: undefined })}
+        onOpen={openSession}
+      />
+    );
   } else if (route.section === "Approvals") {
     view = <Approvals onOpen={openSession} />;
   } else if (route.section === "History") {
     view = <HistoryView onOpen={openSession} />;
+  } else if (route.section === "Usage") {
+    view = <Usage />;
   } else if (route.section === "Settings") {
     view = <Settings />;
   } else {
@@ -112,6 +126,8 @@ function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void,
   const copyReport = useCopyDebugReport();
   const queryClient = useQueryClient();
   const [theme, toggleTheme] = useTheme();
+  const widgetOn = useSettings().data?.widget ?? false;
+  const labels = useLabels().data;
 
   const live = liveSessions(snapshot.data?.sessions);
   const ordered = [...live.filter((s) => needsUser(s.state)), ...live.filter((s) => !needsUser(s.state))];
@@ -120,8 +136,8 @@ function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void,
     return {
       id: `session:${s.id}`,
       group: needsUser(s.state) ? "Needs you" : "Live sessions",
-      label: s.title ?? repo,
-      keywords: `${repo} ${s.repo?.branch ?? ""} ${s.cwd} ${s.model ?? ""}`,
+      label: labels?.get(s.id)?.name ?? s.title ?? repo,
+      keywords: `${repo} ${s.repo?.branch ?? ""} ${s.cwd} ${s.model ?? ""} ${labels?.get(s.id)?.tags.join(" ") ?? ""}`,
       detail: `${harnessNames[s.harness]} · ${repo}${s.repo?.branch ? ` · ${s.repo.branch}` : ""} · ${stateLabels[s.state]}`,
       tone: filterTones[filterOf(s.state)],
       run: () => openSession(s.id),
@@ -144,6 +160,7 @@ function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void,
     })),
     { id: "view:approvals", group: "Go to", label: "Approvals", icon: Inbox, run: () => go("Approvals") },
     { id: "view:history", group: "Go to", label: "History", keywords: "ended past search", icon: History, run: () => go("History") },
+    { id: "view:usage", group: "Go to", label: "Usage", keywords: "cost tokens spend money price", icon: BarChart3, run: () => go("Usage") },
     { id: "view:settings", group: "Go to", label: "Settings", keywords: "integrations connect hooks notifications", icon: SettingsIcon, run: () => go("Settings") },
   ];
 
@@ -155,6 +172,14 @@ function usePaletteItems(go: (section: Section, filter?: SessionFilter) => void,
       keywords: "theme dark light appearance",
       icon: theme === "dark" ? Sun : Moon,
       run: toggleTheme,
+    },
+    {
+      id: "action:widget",
+      group: "Actions",
+      label: widgetOn ? "Hide mini widget" : "Show mini widget",
+      keywords: "widget always on top floating overlay",
+      icon: PanelTopOpen,
+      run: () => void setWidget(!widgetOn),
     },
     { id: "action:refresh", group: "Actions", label: "Refresh", icon: RefreshCw, run: () => void queryClient.invalidateQueries() },
     {
@@ -292,6 +317,7 @@ function Sidebar({ route, go }: { route: Route; go: (section: Section, filter?: 
           onClick={() => go("Approvals")}
         />
         <NavItem icon={History} label="History" active={at("History")} onClick={() => go("History")} />
+        <NavItem icon={BarChart3} label="Usage" active={at("Usage")} onClick={() => go("Usage")} />
       </div>
       <div className="mt-auto flex flex-col gap-3">
         <UpdateBanner />

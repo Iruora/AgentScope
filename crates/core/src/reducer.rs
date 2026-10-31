@@ -16,6 +16,17 @@ const DEDUPE_WINDOW: usize = 50_000;
 
 const TITLE_MAX_CHARS: usize = 80;
 
+/// A single tool call running this long is worth a look.
+pub const LONG_TOOL_MINUTES: i64 = 10;
+/// A working session with no events this long may be stuck.
+pub const SILENT_MINUTES: i64 = 15;
+/// The same call failing this many times in a row looks like a loop.
+pub const FAILURE_STREAK: u32 = 3;
+/// Two sessions writing one file within this window may conflict.
+pub const CONFLICT_WINDOW_MINUTES: i64 = 10;
+/// A failure streak this old is history, not a concern.
+const STALE_CONCERN_MINUTES: i64 = 30;
+
 /// Ids of the entities an event touched, so the store can persist only those.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Changes {
@@ -47,6 +58,8 @@ pub struct Snapshot {
     pub approvals: Vec<PendingApproval>,
     /// Live sessions that need the user. Drives the tray badge.
     pub waiting_count: u32,
+    /// Stuck tools, failure loops, quiet sessions and file conflicts.
+    pub concerns: Vec<Concern>,
 }
 
 #[derive(Debug, Default)]
@@ -98,11 +111,11 @@ impl Graph {
 
     /// Drops ended sessions last active before `cutoff`, with their agents
     /// and approvals, as [`crate::Store::prune`] does on disk.
-    pub fn forget_ended_before(&mut self, cutoff: Timestamp) {
+    pub fn forget_ended_before(&mut self, cutoff: Timestamp, keep: &HashSet<String>) {
         let old: HashSet<String> = self
             .sessions
             .values()
-            .filter(|s| s.ended_at.is_some() && s.last_event_at < cutoff)
+            .filter(|s| s.ended_at.is_some() && s.last_event_at < cutoff && !keep.contains(&s.id))
             .map(|s| s.id.clone())
             .collect();
         if old.is_empty() {
@@ -176,7 +189,135 @@ impl Graph {
             agents: self.agents.values().cloned().collect(),
             approvals,
             waiting_count,
+            concerns: self.concerns(chrono::Utc::now()),
         }
+    }
+
+    /// What about live sessions is worth a look right now.
+    pub fn concerns(&self, now: Timestamp) -> Vec<Concern> {
+        let live: Vec<&Session> = self
+            .sessions
+            .values()
+            .filter(|s| s.ended_at.is_none() && s.state.is_live())
+            .collect();
+        let mut out = Vec::new();
+        let minutes = |since: Timestamp| (now - since).num_minutes();
+        for session in &live {
+            let agents = self
+                .agents
+                .values()
+                .filter(|a| a.session_id == session.id && a.ended_at.is_none());
+            let mut running = false;
+            for agent in agents {
+                if let Some(activity) = &agent.current_activity {
+                    if activity.kind == ActivityKind::Tool {
+                        running = true;
+                        if minutes(activity.started_at) >= LONG_TOOL_MINUTES
+                            && agent.state == AgentState::RunningTool
+                        {
+                            out.push(Concern {
+                                id: format!(
+                                    "long:{}:{}",
+                                    agent.id,
+                                    activity.started_at.timestamp()
+                                ),
+                                kind: ConcernKind::LongTool,
+                                session_id: session.id.clone(),
+                                agent_id: Some(agent.id.clone()),
+                                message: format!(
+                                    "{} has run for {} min",
+                                    activity.summary,
+                                    minutes(activity.started_at)
+                                ),
+                                since: activity.started_at,
+                                path: None,
+                                other_session_ids: Vec::new(),
+                            });
+                        }
+                    }
+                }
+                if let Some(streak) = &agent.failures {
+                    if streak.count >= FAILURE_STREAK
+                        && minutes(streak.last_at) < STALE_CONCERN_MINUTES
+                    {
+                        out.push(Concern {
+                            id: format!("fail:{}:{}", agent.id, streak.summary),
+                            kind: ConcernKind::RepeatedFailure,
+                            session_id: session.id.clone(),
+                            agent_id: Some(agent.id.clone()),
+                            message: format!(
+                                "{} failed {} times in a row",
+                                streak.summary, streak.count
+                            ),
+                            since: streak.last_at,
+                            path: None,
+                            other_session_ids: Vec::new(),
+                        });
+                    }
+                }
+            }
+            if !running
+                && matches!(session.state, AgentState::Thinking | AgentState::Starting)
+                && minutes(session.last_event_at) >= SILENT_MINUTES
+            {
+                out.push(Concern {
+                    id: format!(
+                        "silent:{}:{}",
+                        session.id,
+                        session.last_event_at.timestamp()
+                    ),
+                    kind: ConcernKind::Silent,
+                    session_id: session.id.clone(),
+                    agent_id: None,
+                    message: format!("No activity for {} min", minutes(session.last_event_at)),
+                    since: session.last_event_at,
+                    path: None,
+                    other_session_ids: Vec::new(),
+                });
+            }
+        }
+
+        // Two live sessions writing the same file within the window.
+        let mut writers: BTreeMap<&str, Vec<(&Session, Timestamp)>> = BTreeMap::new();
+        for session in &live {
+            for f in &session.files {
+                if minutes(f.last_at) < CONFLICT_WINDOW_MINUTES {
+                    writers
+                        .entry(f.path.as_str())
+                        .or_default()
+                        .push((session, f.last_at));
+                }
+            }
+        }
+        for (path, sessions) in writers.into_iter().filter(|(_, w)| w.len() > 1) {
+            for (session, at) in &sessions {
+                let others: Vec<String> = sessions
+                    .iter()
+                    .filter(|(o, _)| o.id != session.id)
+                    .map(|(o, _)| o.id.clone())
+                    .collect();
+                out.push(Concern {
+                    id: format!("conflict:{}:{path}", session.id),
+                    kind: ConcernKind::Conflict,
+                    session_id: session.id.clone(),
+                    agent_id: None,
+                    message: format!(
+                        "{} is also being edited by {}",
+                        file_name(path),
+                        if others.len() == 1 {
+                            "another agent".to_owned()
+                        } else {
+                            format!("{} other agents", others.len())
+                        }
+                    ),
+                    since: *at,
+                    path: Some(path.to_owned()),
+                    other_session_ids: others,
+                });
+            }
+        }
+        out.sort_by(|a, b| a.since.cmp(&b.since).then(a.id.cmp(&b.id)));
+        out
     }
 
     pub fn apply(&mut self, ev: &AgentEvent) -> Changes {
@@ -312,7 +453,11 @@ impl Graph {
                     &mut changes,
                 );
             }
-            EventKind::ToolStarted { tool, summary } => {
+            EventKind::ToolStarted {
+                tool,
+                summary,
+                files,
+            } => {
                 let agent = self.agents.get_mut(&agent_id).expect("ensured above");
                 agent.state = AgentState::RunningTool;
                 agent.current_activity = Some(Activity {
@@ -321,16 +466,23 @@ impl Graph {
                     summary: summary.clone(),
                     started_at: ev.at,
                 });
+                if !files.is_empty() {
+                    let session = self.sessions.get_mut(&session_id).expect("ensured above");
+                    touch_files(session, files, &agent_id, ev.at);
+                }
             }
             EventKind::ToolFinished | EventKind::ToolFailed { .. } => {
-                let resolution = match ev.kind {
-                    EventKind::ToolFinished => Resolution::Approved,
-                    _ => Resolution::Unknown,
+                let failed = !matches!(ev.kind, EventKind::ToolFinished);
+                let resolution = if failed {
+                    Resolution::Unknown
+                } else {
+                    Resolution::Approved
                 };
                 self.resolve_approvals(|a| a.agent_id == agent_id, resolution, ev.at, &mut changes);
                 let agent = self.agents.get_mut(&agent_id).expect("ensured above");
+                let summary = agent.current_activity.take().map(|a| a.summary);
                 agent.state = AgentState::Thinking;
-                agent.current_activity = None;
+                track_failures(agent, summary, failed, ev.at);
             }
             EventKind::ApprovalRequested {
                 approval_id,
@@ -510,6 +662,7 @@ impl Graph {
                 transcript_path: None,
                 tokens: None,
                 root_agent_id: root_agent_id.clone(),
+                files: Vec::new(),
             },
         );
         self.agents.insert(
@@ -613,6 +766,54 @@ impl Graph {
     }
 }
 
+/// Records the files a tool call writes, newest first.
+fn touch_files(session: &mut Session, files: &[String], agent_id: &str, at: Timestamp) {
+    for path in files {
+        if let Some(i) = session.files.iter().position(|f| &f.path == path) {
+            let mut f = session.files.remove(i);
+            f.edits += 1;
+            f.last_at = f.last_at.max(at);
+            f.agent_id = agent_id.to_owned();
+            session.files.insert(0, f);
+        } else {
+            session.files.insert(
+                0,
+                FileTouch {
+                    path: path.clone(),
+                    edits: 1,
+                    first_at: at,
+                    last_at: at,
+                    agent_id: agent_id.to_owned(),
+                },
+            );
+        }
+    }
+    session.files.truncate(Session::MAX_FILES);
+}
+
+/// Counts the same call failing in a row. Its success ends the streak;
+/// other calls in between (an edit before the retry) do not.
+fn track_failures(agent: &mut Agent, summary: Option<String>, failed: bool, at: Timestamp) {
+    let Some(summary) = summary else {
+        return;
+    };
+    match (&mut agent.failures, failed) {
+        (Some(streak), true) if streak.summary == summary => {
+            streak.count += 1;
+            streak.last_at = at;
+        }
+        (_, true) => {
+            agent.failures = Some(FailureStreak {
+                summary,
+                count: 1,
+                last_at: at,
+            });
+        }
+        (Some(streak), false) if streak.summary == summary => agent.failures = None,
+        _ => {}
+    }
+}
+
 fn new_agent(id: String, session_id: &str, parent: Option<String>, ev: &AgentEvent) -> Agent {
     Agent {
         id,
@@ -630,7 +831,12 @@ fn new_agent(id: String, session_id: &str, parent: Option<String>, ev: &AgentEve
         started_at: ev.at,
         ended_at: None,
         result: None,
+        failures: None,
     }
+}
+
+fn file_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
 }
 
 fn title_from_prompt(prompt: &str) -> Option<String> {
@@ -730,6 +936,7 @@ mod tests {
             EventKind::ToolStarted {
                 tool: "Bash".into(),
                 summary: "Bash: npm test".into(),
+                files: vec![],
             },
         );
         assert_eq!(s.session().state, AgentState::RunningTool);
@@ -818,6 +1025,7 @@ mod tests {
         let tool = || EventKind::ToolStarted {
             tool: "Read".into(),
             summary: "Read a.rs".into(),
+            files: vec![],
         };
 
         let mut from_transcript = s.ev(None, Some("tu_1"), tool());
@@ -938,6 +1146,7 @@ mod tests {
             EventKind::ToolStarted {
                 tool: "Bash".into(),
                 summary: "Bash: ls".into(),
+                files: vec![],
             },
         );
         let mut replay = s.ev(None, None, started());
@@ -1026,19 +1235,20 @@ mod tests {
             },
         );
         let cutoff = s.session().last_event_at + Duration::days(1);
-        s.graph.forget_ended_before(cutoff);
+        s.graph.forget_ended_before(cutoff, &HashSet::new());
         assert!(
             s.graph.session("claude-code:s1").is_some(),
             "live sessions stay"
         );
 
         s.apply(None, EventKind::SessionEnded);
-        s.graph.forget_ended_before(s.session().last_event_at);
+        s.graph
+            .forget_ended_before(s.session().last_event_at, &HashSet::new());
         assert!(
             s.graph.session("claude-code:s1").is_some(),
             "recent ones stay"
         );
-        s.graph.forget_ended_before(cutoff);
+        s.graph.forget_ended_before(cutoff, &HashSet::new());
         assert!(s.graph.session("claude-code:s1").is_none());
         assert!(s.graph.snapshot().agents.is_empty());
     }
@@ -1049,5 +1259,112 @@ mod tests {
         assert_eq!(title.chars().count(), TITLE_MAX_CHARS + 1);
         assert!(title.ends_with('…'));
         assert_eq!(title_from_prompt("  \n "), None);
+    }
+
+    fn at(session: &str, agent: Option<&str>, minutes_ago: i64, kind: EventKind) -> AgentEvent {
+        AgentEvent {
+            source: EventSource::Hook,
+            at: chrono::Utc::now() - Duration::minutes(minutes_ago),
+            harness: HarnessId::ClaudeCode,
+            session: session.into(),
+            agent: agent.map(Into::into),
+            dedupe_key: None,
+            kind,
+        }
+    }
+
+    fn tool(summary: &str, files: &[&str]) -> EventKind {
+        EventKind::ToolStarted {
+            tool: "Edit".into(),
+            summary: summary.into(),
+            files: files.iter().map(|f| (*f).to_owned()).collect(),
+        }
+    }
+
+    #[test]
+    fn files_are_tracked_newest_first() {
+        let mut g = Graph::new();
+        g.apply(&at("s1", None, 5, tool("Edit a", &["/r/a"])));
+        g.apply(&at("s1", None, 4, tool("Edit b", &["/r/b"])));
+        g.apply(&at("s1", None, 3, tool("Edit a", &["/r/a"])));
+        let files = &g.session("claude-code:s1").unwrap().files;
+        assert_eq!(
+            files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>(),
+            ["/r/a", "/r/b"]
+        );
+        assert_eq!(files[0].edits, 2);
+    }
+
+    #[test]
+    fn concerns_flag_long_tools_loops_silence_and_conflicts() {
+        let mut g = Graph::new();
+        let now = chrono::Utc::now();
+
+        // A tool running for 12 minutes.
+        g.apply(&at("long", None, 12, tool("Bash: npm run e2e", &[])));
+
+        // The same command failing three times, with an edit in between.
+        for (i, summary) in [
+            "Bash: cargo test",
+            "Edit x",
+            "Bash: cargo test",
+            "Bash: cargo test",
+        ]
+        .iter()
+        .enumerate()
+        {
+            let m = 9 - i as i64 * 2;
+            g.apply(&at("loop", None, m, tool(summary, &[])));
+            let end = if summary.starts_with("Bash") {
+                EventKind::ToolFailed { error: None }
+            } else {
+                EventKind::ToolFinished
+            };
+            g.apply(&at("loop", None, m - 1, end));
+        }
+
+        // Thinking with no events for 20 minutes.
+        g.apply(&at(
+            "quiet",
+            None,
+            20,
+            EventKind::PromptSubmitted {
+                prompt: "go".into(),
+            },
+        ));
+
+        // Two sessions editing one file.
+        g.apply(&at("c1", None, 3, tool("Edit app", &["/r/app.ts"])));
+        g.apply(&at("c1", None, 2, EventKind::ToolFinished));
+        g.apply(&at("c2", None, 1, tool("Edit app", &["/r/app.ts"])));
+        g.apply(&at("c2", None, 0, EventKind::ToolFinished));
+
+        let concerns = g.concerns(now);
+        let kinds = |session: &str| {
+            concerns
+                .iter()
+                .filter(|c| c.session_id == format!("claude-code:{session}"))
+                .map(|c| c.kind)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(kinds("long"), [ConcernKind::LongTool]);
+        assert_eq!(kinds("loop"), [ConcernKind::RepeatedFailure]);
+        assert_eq!(kinds("quiet"), [ConcernKind::Silent]);
+        assert_eq!(kinds("c1"), [ConcernKind::Conflict]);
+        assert_eq!(kinds("c2"), [ConcernKind::Conflict]);
+        let c1 = concerns
+            .iter()
+            .find(|c| c.session_id == "claude-code:c1")
+            .unwrap();
+        assert_eq!(c1.other_session_ids, ["claude-code:c2"]);
+        assert_eq!(c1.path.as_deref(), Some("/r/app.ts"));
+
+        // A success of the looping command ends the streak.
+        g.apply(&at("loop", None, 0, tool("Bash: cargo test", &[])));
+        g.apply(&at("loop", None, 0, EventKind::ToolFinished));
+        assert!(g
+            .concerns(now)
+            .iter()
+            .all(|c| c.kind != ConcernKind::RepeatedFailure));
     }
 }

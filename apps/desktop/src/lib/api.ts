@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 
 import { commands, events } from "../bindings";
-import type { HarnessId, PushSettings, Settings, UpdateInfo } from "./types";
+import type { HarnessId, PushSettings, Session, SessionLabel, Settings, UpdateInfo } from "./types";
 
 const snapshotKey = ["snapshot"] as const;
 const answerableKey = ["answerable"] as const;
@@ -24,6 +24,10 @@ export function useGraphUpdates() {
       void queryClient.invalidateQueries({ queryKey: snapshotKey });
       void queryClient.invalidateQueries({ queryKey: ["sessionEvents"] });
       void queryClient.invalidateQueries({ queryKey: answerableKey });
+      void queryClient.invalidateQueries({ queryKey: ["usage"] });
+      void queryClient.invalidateQueries({ queryKey: ["costs"] });
+      // The tray and the widget can change settings, e.g. hide the widget.
+      void queryClient.invalidateQueries({ queryKey: ["settings"] });
     });
     return () => {
       void unlisten.then((stop) => stop());
@@ -87,6 +91,11 @@ export function useGoToAgent() {
 
 export function revealTranscript(sessionId: string) {
   return unwrap(commands.revealTranscript(sessionId));
+}
+
+/** Saves a session as Markdown or JSON where the user picks. Resolves to the path, or null if cancelled. */
+export function exportSession(sessionId: string, format: "markdown" | "json") {
+  return unwrap(commands.exportSession(sessionId, format));
 }
 
 /** Calls `open` with a session id when the tray asks to show one. */
@@ -182,6 +191,10 @@ export function showSession(sessionId: string) {
 }
 
 /** Closes the approval popup until a new prompt arrives. */
+export function setWidget(visible: boolean) {
+  return unwrap(commands.setWidget(visible));
+}
+
 export function closePopup() {
   return commands.closePopup();
 }
@@ -189,4 +202,56 @@ export function closePopup() {
 /** Sends a test push with settings that are not saved yet. */
 export function useTestPush() {
   return useMutation({ mutationFn: (push: PushSettings) => unwrap(commands.testPush(push)) });
+}
+
+/** Token usage and estimated cost for the last `days` days. */
+export function useUsage(days: number) {
+  return useQuery({ queryKey: ["usage", days], queryFn: () => unwrap(commands.getUsage(days)) });
+}
+
+/** Estimated cost per session id, for sessions with a priced model. */
+export function useCosts() {
+  return useQuery({ queryKey: ["costs"], queryFn: () => commands.getCosts() });
+}
+
+/** `git diff` of a file the session wrote. */
+export function useFileDiff(sessionId: string, path: string | null) {
+  return useQuery({
+    queryKey: ["fileDiff", sessionId, path],
+    queryFn: () => unwrap(commands.getFileDiff(sessionId, path!)),
+    enabled: path != null,
+    staleTime: 0,
+  });
+}
+
+const labelsKey = ["labels"] as const;
+
+/** Pins, names, tags and notes, by session id. */
+export function useLabels() {
+  return useQuery({
+    queryKey: labelsKey,
+    queryFn: async () => new Map((await unwrap(commands.getLabels())).map((l) => [l.sessionId, l])),
+  });
+}
+
+/** Saves a session's label. The saved, cleaned up label replaces the cached one. */
+export function useSetLabel() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (label: SessionLabel) => unwrap(commands.setLabel(label)),
+    onSuccess: (saved) => {
+      queryClient.setQueryData<Map<string, SessionLabel>>(labelsKey, (old) => {
+        const next = new Map(old);
+        const empty = !saved.pinned && !saved.name && saved.tags.length === 0 && !saved.note;
+        if (empty) next.delete(saved.sessionId);
+        else next.set(saved.sessionId, saved);
+        return next;
+      });
+    },
+  });
+}
+
+/** The user's name for a session, else the harness's title. */
+export function sessionTitle(session: Session, label?: SessionLabel): string {
+  return label?.name ?? session.title ?? "Untitled session";
 }
