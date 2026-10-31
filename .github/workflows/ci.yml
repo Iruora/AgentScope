@@ -46,7 +46,7 @@ jobs:
       - run: pnpm typecheck
         working-directory: apps/desktop
       - name: Test repo scripts
-        run: node --test scripts/drift/drift.test.mjs
+        run: node --test scripts/drift/drift.test.mjs scripts/packages/manifests.test.mjs
 
   build:
     name: Test and build (${{ matrix.name }})
